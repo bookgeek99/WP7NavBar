@@ -1,0 +1,17 @@
+# Android / Gradle 构建产物
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+!app/build/outputs/apk/debug/app-debug.apk
+
+# 临时/本地产物
+src.zip
+WP7NavBar-*.apk

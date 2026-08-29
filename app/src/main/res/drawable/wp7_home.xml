@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WP7 风格主页键：旧版 Windows 7 波浪四格旗子
+     左半上鼓、右半下鼓，四格之间有明显分隔 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 左上格 -->
+    <path
+        android:pathData="M3.5,8.2 C6.2,6.6 10,6.2 13.5,7.0 L13.5,12.6 C10,11.9 6.2,12.3 3.5,13.8 Z"
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="1.0" />
+    <!-- 左下格 -->
+    <path
+        android:pathData="M3.5,14.6 C6.2,13.2 10,12.8 13.5,13.6 L13.5,19.0 C10,18.3 6.2,18.7 3.5,20.0 Z"
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="1.0" />
+    <!-- 右上格（右列，略下移体现右半下鼓） -->
+    <path
+        android:pathData="M15.2,10.8 C17.6,11.6 20.2,13.0 21.8,14.6 L21.5,17.4 C19.9,15.9 17.3,14.5 15.0,13.8 Z"
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="1.0" />
+    <!-- 右下格 -->
+    <path
+        android:pathData="M15.2,14.4 C17.6,15.2 20.2,16.6 21.8,18.1 L21.5,20.8 C19.9,19.4 17.3,18.0 15.0,17.3 Z"
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="1.0" />
+</vector>

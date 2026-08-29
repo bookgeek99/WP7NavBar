@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:label="WP7 NavBar"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.Wp7NavBar"
+        android:allowBackup="false">
+
+        <!-- LSPosed 模块声明 (元数据告诉框架这是模块) -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="HyperOS 3 三键导航栏改为 WP7 风格图标" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="82" />
+
+        <!-- 作用域声明：仅 Hook SystemUI -->
+        <meta-data
+            android:name="xposedscope"
+            android:value="com.android.systemui" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

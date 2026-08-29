@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 三键 WP7 风格图标：三角(back) + 圆点(home) + 方块(recents)，居中 -->
+    <!-- Back 三角 -->
+    <path
+        android:pathData="M38,44 L30,54 L38,64"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- Home 圆 + 环 -->
+    <path
+        android:pathData="M54,54 m-8,0 a8,8 0 1,1 16,0 a8,8 0 1,1 -16,0"
+        android:fillColor="#FFFFFF" />
+    <!-- Recents 方块 -->
+    <path
+        android:pathData="M70,46 L78,46 L78,62 L70,62 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineJoin="round" />
+</vector>

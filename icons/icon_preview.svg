@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="120" viewBox="0 0 360 120">
+  <rect width="360" height="120" fill="#333"/>
+  <!-- Back: 细线左箭头 -->
+  <g transform="translate(40,60)" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="20" y1="0" x2="-20" y2="0"/>
+    <polyline points="0,-14 -20,0 0,14"/>
+  </g>
+  <!-- Home: 旧版 Windows 7 波浪四格旗子 -->
+  <g transform="translate(120,60)" fill="#fff">
+    <!-- 左上格 -->
+    <path d="M0,-18 C10,-20 24,-15 34,-8 L34,-2 C24,-9 10,-14 0,-12 Z"/>
+    <!-- 右上格 -->
+    <path d="M36,-10 C46,-4 54,4 66,8 L66,2 C54,-2 46,-10 36,-16 Z"/>
+    <!-- 左下格 -->
+    <path d="M0,-10 C10,-12 24,-7 34,0 L34,6 C24,-1 10,-6 0,-4 Z"/>
+    <!-- 右下格 -->
+    <path d="M36,-2 C46,4 54,12 66,16 L66,10 C54,6 46,-2 36,-8 Z"/>
+  </g>
+  <!-- Recents(不换,示意) -->
+  <g transform="translate(200,60)" stroke="#888" stroke-width="3" fill="none">
+    <rect x="-18" y="-18" width="36" height="36" rx="4"/>
+  </g>
+</svg>
