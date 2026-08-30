@@ -1,17 +1,23 @@
 # WP7 NavBar — LSPosed 模块
-
-把 **HyperOS 3（K70 Ultra / Android 16）** 三键导航栏的 **【返回】【主页】** 图标定制为 **Windows Phone 7 风格**，**【最近】** 保持原样。
-
+把 **HyperOS 3（K70 Ultra / Android 16）** 三键导航栏定制为 **Windows Phone 7 风格**：
+【返回】【主页】图标换成 WP7 样式，并新增一个**任务键左侧的 WP7 风格搜索键**（放大镜）。
 纯 LSPosed Hook，**不修改 SystemUI APK、不替换系统资源**。
-
 ## 功能效果
 | 按键 | WP7 风格 | 状态 |
 |------|---------|------|
 | 返回 (Back) | 细线左箭头 | ✅ 已替换 |
 | 主页 (Home) | 经典 Windows 四格徽标（飘扬感、带曲线） | ✅ 已替换 |
-| 最近 (Recents) | 保持原样 | — |
-
-> 后续计划：在导航栏两端空白处添加功能按钮（如输入法切换按钮）。
+| 最近 (Recents) | 保持原样 | ✅ 移至最右侧（搜索键开启时） |
+| 搜索键 (放大镜) | WP7 风格，圆圈在右上、柄在左下 | ✅ 常驻显示，点击唤起超级小爱、长按识屏 |
+| 左侧输入法切换 | ime_switcher | ✅ 可开关（IME 弹出时显示） |
+### 搜索键行为
+- **单击**：唤起超级小爱（语音对话）—— 发送 `ACTION_ASSIST` 到 `VoiceService`。
+- **长按**：触发超级小爱识屏 —— 携带 `voice_assist_start_from_key=long_press_home_key`。
+- 颜色、阴影与 back/home 对齐；做边缘淡化处理。
+### 设置界面（模块 App）
+打开模块 App 可配置：
+- **左侧切换输入法**：控制左侧 ime_switcher 的注入。
+- **任务键搜索键**：控制搜索键显示。开启时 recent 移到最右、注入搜索键；关闭时 recent 恢复系统默认位置与大小。
 
 ## 技术方案
 HyperOS 3 的 `MiuiSystemUI`（`com.android.systemui` v16.03.251211.r）导航栏按键是通过
@@ -74,9 +80,12 @@ wp7-navbar/
 │       ├── AndroidManifest.xml          # xposed 模块声明 + 作用域
 │       ├── assets/xposed_init           # LSPosed 入口
 │       └── java/com/wp7/navbar/
-│           ├── MainActivity.java        # 模块状态页（LSPosed 确认用）
-│           ├── Wp7NavbarHook.java       # 核心 Hook（setImageDrawable）
-│           └── Wp7IconDrawable.java     # WP7 图标：纯代码 Canvas 矢量绘制
+│           ├── MainActivity.java        # 模块设置界面（Material 风格，动态构建）
+│           ├── Wp7NavbarHook.java       # 核心 Hook（布局注入 + 搜索键 + 图标替换）
+│           ├── Wp7IconDrawable.java     # WP7 图标：纯代码 Canvas 矢量绘制
+│           ├── SettingsStore.java       # 设置持久化（SharedPreferences）
+│           ├── Wp7SettingsProvider.java # 跨进程设置读取（ContentProvider）
+│           └── Ui.java                  # UI 工具（dp 转换等）
 ```
 
 ## 使用说明

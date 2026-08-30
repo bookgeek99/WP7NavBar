@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0F243E</color>
+    <!-- HyperOS/WP7 蓝色系主色 -->
+    <color name="primary">#1E88E5</color>
+    <color name="primary_dark">#1565C0</color>
+    <color name="accent">#00BCD4</color>
+
+    <!-- 界面背景与文字 -->
+    <color name="bg_screen">#F5F6F8</color>
+    <color name="card_bg">#FFFFFF</color>
+    <color name="text_primary">#1C1B1F</color>
+    <color name="text_secondary">#79747E</color>
+    <color name="divider">#EEEEEE</color>
+
+    <!-- 图标 -->
+    <color name="ic_launcher_background">#1E88E5</color>
 </resources>

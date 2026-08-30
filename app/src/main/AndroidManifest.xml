@@ -31,6 +31,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 跨进程设置 Provider：向 SystemUI 暴露模块设置（开/关） -->
+        <provider
+            android:name=".Wp7SettingsProvider"
+            android:authorities="com.wp7.navbar.settings"
+            android:exported="true" />
     </application>
 
 </manifest>

@@ -57,6 +57,9 @@ public class Wp7IconDrawable extends Drawable {
             case "RECENTS":
                 drawRecents(canvas, s, cx, cy);
                 break;
+            case "SEARCH":
+                drawSearch(canvas, s, cx, cy);
+                break;
             default:
                 canvas.drawCircle(cx, cy, s / 6f, paint);
                 break;
@@ -191,6 +194,30 @@ public class Wp7IconDrawable extends Drawable {
         p.setStyle(Paint.Style.STROKE);
         float r = s * 0.26f;
         canvas.drawRoundRect(cx - r, cy - r, cx + r, cy + r, s * 0.08f, s * 0.08f, p);
+    }
+
+    /** WP7 搜索：放大镜（圆形镜框 + 斜向手柄），细线 stroke */
+    private void drawSearch(Canvas canvas, float s, float cx, float cy) {
+        Paint p = new Paint(paint);
+        p.setStyle(Paint.Style.STROKE);
+        p.setStrokeWidth(Math.max(2f, s * 0.09f));
+        p.setStrokeCap(Paint.Cap.ROUND);
+        p.setStrokeJoin(Paint.Join.ROUND);
+
+        float r = s * 0.24f;               // 镜框半径
+        // WP7 样式：镜框偏右上部，柄从镜框左下缘向左下方伸出
+        float cx1 = cx + r * 0.35f;        // 镜框中心（偏右上）
+        float cy1 = cy - r * 0.35f;
+        canvas.drawCircle(cx1, cy1, r, p);
+
+        // 手柄：从镜框左下缘向左下方伸出一段斜线
+        float hx = cx1 - r * 0.75f;
+        float hy = cy1 + r * 0.75f;
+        float hlen = r * 0.95f;
+        float ang = (float) Math.toRadians(45);
+        float ex = hx - hlen * (float) Math.cos(ang);
+        float ey = hy + hlen * (float) Math.sin(ang);
+        canvas.drawLine(hx, hy, ex, ey, p);
     }
 
     @Override
