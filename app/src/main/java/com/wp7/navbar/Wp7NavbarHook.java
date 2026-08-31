@@ -85,12 +85,20 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
 
     // 强制搜索键可见时的递归防护
     private static boolean inForceVis = false;
-
     // 从 back/home 读取的阴影参数，让搜索键带与它们一致的阴影
     private static int refShadowOffsetX = 0;
     private static int refShadowOffsetY = 0;
     private static int refShadowSize = 0;
     private static int refShadowColor = 0;
+
+    // 阶段A：在创建入口标记搜索键，setImageDrawable before hook 直接替换
+    private static final java.util.Set<ImageView> searchMarkedViews =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<ImageView, Boolean>());
+
+    // 阶段A增强：被标记为搜索键宿主的 ButtonDispatcher（其当前 View 是搜索键时，替换下发图标）
+    private static final java.util.Set<Object> searchMarkedDispatchers =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
+
 
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
@@ -105,23 +113,46 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                     "com.android.systemui.navigationbar.views.buttons.KeyButtonView", lpparam.classLoader);
             XposedBridge.hookAllMethods(keyBtnCls, "setImageDrawable", new XC_MethodHook() {
                 @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (!(param.thisObject instanceof ImageView)) return;
+                        ImageView iv = (ImageView) param.thisObject;
+
+                        // 搜索键：在 before 直接把传入 KeyButtonDrawable 的 childState 替换为 WP7 搜索图标，
+                        // 避免“先显示输入法图标，再事后替换”的闪现。
+                        if (iv.getId() == ID_IME_SWITCHER) {
+                            boolean marked = isMarkedSearchButton(iv);
+                            if (!marked && isSearchButtonEnabled(iv) && isSearchButtonStructuralStrict(iv)) {
+                                searchMarkedViews.add(iv);
+                                marked = true;
+                                XposedBridge.log(TAG + ": [A] structural(strict) marked search in setImageDrawable");
+                            }
+                            Drawable incoming = param.args != null && param.args.length > 0
+                                    ? (Drawable) param.args[0] : null;
+                            XposedBridge.log(TAG + ": [A] ime_switcher setImageDrawable marked=" + marked
+                                    + " incoming=" + (incoming != null ? incoming.getClass().getSimpleName() : "null"));
+                            if (marked) {
+                                Drawable kd = createSearchKeyButtonDrawable(iv, iv.getClass().getClassLoader());
+                                if (kd != null) {
+                                    param.args[0] = kd;
+                                }
+                                setupSearchButton(iv, false);
+                                XposedBridge.log(TAG + ": [A] before replace search icon id=0x"
+                                        + Integer.toHexString(iv.getId()));
+                            }
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": setImageDrawable before err: " + t);
+                    }
+                }
+
+                @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
                         if (param.thisObject instanceof ImageView) {
                             ImageView iv = (ImageView) param.thisObject;
-                            // 边缘按钮（输入法切换 / 多任务）淡一点
                             applyEdgeFade(iv);
                             replaceIfWp7(iv);
-                            // 搜索键图标保护：若此 ime_switcher 是右段搜索键且系统又重设了图标，
-                            // 重新应用放大镜，避免横屏/重建后被覆盖回输入法图标。
-                            if (iv.getId() == ID_IME_SWITCHER && !searchIconGuard && isSearchButton(iv)) {
-                                searchIconGuard = true;
-                                try {
-                                    setupSearchButton(iv);
-                                } finally {
-                                    searchIconGuard = false;
-                                }
-                            }
                         }
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + ": setImageDrawable after err: " + t);
@@ -129,6 +160,33 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 }
             });
             XposedBridge.log(TAG + ": hooked KeyButtonView.setImageDrawable");
+
+            // 阶段A增强：hook ButtonDispatcher.addView after —— 当已标记的搜索键 View 注册进 dispatcher 时，
+            // 记录该 dispatcher，供后续精确识别。注意：不在 dispatcher 层统一替换图标，
+            // 因为 ime_switcher dispatcher 同时管理左段输入法键和右段搜索键，
+            // 统一替换会把左段输入法键也变成搜索图标。
+            try {
+                Class<?> btnDispCls = XposedHelpers.findClass(
+                        "com.android.systemui.navigationbar.views.buttons.ButtonDispatcher", lpparam.classLoader);
+                XposedBridge.hookAllMethods(btnDispCls, "addView", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            if (param.args == null || param.args.length == 0) return;
+                            Object view = param.args[0];
+                            if (view instanceof ImageView && isMarkedSearchButton((ImageView) view)) {
+                                searchMarkedDispatchers.add(param.thisObject);
+                                // 在 dispatcher 层设置点击/长按监听，确保横竖屏两个 View 都生效
+                                setupSearchDispatcherListeners(param.thisObject);
+                                XposedBridge.log(TAG + ": [A] marked search dispatcher + listeners set");
+                            }
+                        } catch (Throwable t) { }
+                    }
+                });
+                XposedBridge.log(TAG + ": hooked ButtonDispatcher.addView (mark search dispatcher)");
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": ButtonDispatcher hook err: " + t);
+            }
 
             // setDarkIntensity：把正常按钮（back/home/recent 等）收到的暗色 intensity 转发给搜索键，
             // 因为系统对 ime_switcher 调用的 intensity 恒为 0.0（固定），导致搜索键颜色不变。
@@ -179,12 +237,16 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
-                        if (param.thisObject == searchBtnView && !inForceVis && !landscapeMode) {
-                            if (searchBtnView.getVisibility() != View.VISIBLE) {
+                        if (!(param.thisObject instanceof ImageView)) return;
+                        ImageView iv = (ImageView) param.thisObject;
+                        // 所有被标记为搜索键的 View 都强制可见（横竖屏两套）
+                        if (searchMarkedViews.contains(iv) && !inForceVis) {
+                            if (iv.getVisibility() != View.VISIBLE) {
                                 inForceVis = true;
-                                searchBtnView.setVisibility(View.VISIBLE);
+                                iv.setVisibility(View.VISIBLE);
                                 inForceVis = false;
-                                XposedBridge.log(TAG + ": search FORCED VISIBLE (IME state changed)");
+                                XposedBridge.log(TAG + ": search FORCED VISIBLE id=0x"
+                                        + Integer.toHexString(iv.getId()));
                             }
                         }
                     } catch (Throwable t) { }
@@ -233,19 +295,24 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         try {
-                            // 贴边：清除 horizontal 容器左右边距（需在 measure 前执行）
                             clearNavBarSideMargins(param.thisObject);
-                            // 搜索按钮初始化：延迟到布局完成后，用 getX() 判断左右段
+                            // 阶段A：创建后立刻在结构层标记搜索键，before hook 即可生效
+                            markSearchButtonsFromInflater(param.thisObject);
+                            try {
+                                if (param.thisObject instanceof android.view.View) {
+                                    ((android.view.View) param.thisObject).requestLayout();
+                                }
+                            } catch (Throwable ignored) { }
                             if (param.thisObject instanceof android.view.View) {
                                 final android.view.View v = (android.view.View) param.thisObject;
                                 v.postDelayed(new Runnable() {
                                     @Override
                                     public void run() {
                                         try {
-                                            // 横屏竖排：隐藏所有 ime_switcher，不配置搜索键
                                             if (isLandscape(v)) {
                                                 landscapeMode = true;
-                                                hideAllImeSwitchers(v);
+                                                // 阶段B：横屏保留搜索键，正常配置
+                                                setupSearchButtonInHierarchy(v);
                                                 return;
                                             }
                                             landscapeMode = false;
@@ -280,6 +347,13 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                                 if (id != null && id == ID_IME_SWITCHER && Boolean.FALSE.equals(vis)) {
                                     // 横屏竖排：不强制显示，允许隐藏（配合 hideAllImeSwitchers 回归系统三键）
                                     if (landscapeMode) {
+                                        // 阶段B：横屏也强制显示搜索键
+                                        if (!searchBtnEnabledCached) {
+                                            return;
+                                        }
+                                        param.args[1] = true;
+                                        XposedBridge.log(TAG + ": [setButtonVisibility] FORCED LANDSCAPE id=0x"
+                                                + Integer.toHexString(id) + " markedVisible=false->true");
                                         return;
                                     }
                                     // 搜索键关闭时：不强制显示 menu_ime（输入法键），让系统正常隐藏它，
@@ -687,8 +761,9 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 int orient = ((android.view.View) navView).getResources().getConfiguration().orientation;
                 if (orient == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
                     landscapeMode = true;
-                    XposedBridge.log(TAG + ": reconfigureSearchButton (LANDSCAPE) -> hide ime_switchers");
-                    hideAllImeSwitchers(navView);
+                    XposedBridge.log(TAG + ": reconfigureSearchButton (LANDSCAPE) -> setup search");
+                    menuShown = false;
+                    setupSearchButtonInHierarchy(navView);
                     return;
                 } else {
                     landscapeMode = false;
@@ -929,6 +1004,29 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 }
                 XposedBridge.log(TAG + ": nav bar horizontal side margins cleared");
             }
+            // 阶段B：同时清除 mVertical（横屏竖排容器）的边距
+            // 横屏竖排容器在屏幕侧边，"避圆角"是上下方向的 padding/margin，需连同 top/bottom 一起清
+            try {
+                Object v = getField(inflater, "mVertical");
+                if (v instanceof android.view.View) {
+                    android.view.View vv = (android.view.View) v;
+                    vv.setPadding(0, 0, 0, 0);
+                    android.view.ViewGroup.LayoutParams lp = vv.getLayoutParams();
+                    if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
+                        android.view.ViewGroup.MarginLayoutParams mlp = (android.view.ViewGroup.MarginLayoutParams) lp;
+                        mlp.leftMargin = 0;
+                        mlp.rightMargin = 0;
+                        mlp.topMargin = 0;
+                        mlp.bottomMargin = 0;
+                        vv.setLayoutParams(mlp);
+                    }
+                    XposedBridge.log(TAG + ": nav bar vertical side margins cleared (all)");
+                } else {
+                    XposedBridge.log(TAG + ": mVertical not found or not View: " + (v != null ? v.getClass().getName() : "null"));
+                }
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": clear vertical margins err: " + t);
+            }
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": clearNavBarSideMargins err: " + t);
         }
@@ -940,16 +1038,20 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 android.view.ViewGroup vg = (android.view.ViewGroup) root;
                 for (int i = 0; i < vg.getChildCount(); i++) {
                     View child = vg.getChildAt(i);
-                    // 找到 menu 键（搜索按钮），配置为放大镜 + 点击唤起助手
-                    // 诊断：所有 ime_switcher 打印其父容器与是否右侧有 recent
                     if (child instanceof ImageView && child.getId() == ID_IME_SWITCHER) {
+                        boolean isSearch = isMarkedSearchButton((ImageView) child);
                         XposedBridge.log(TAG + ": [diag] ime_switcher id=0x"
                                 + Integer.toHexString(child.getId())
                                 + " parent=" + (child.getParent() != null ? child.getParent().getClass().getSimpleName() : "null")
-                                + " isSearch=" + isSearchButton((ImageView) child)
+                                + " isSearch=" + isSearch
                                 + " vis=" + child.getVisibility());
+                        // 横屏：隐藏非搜索键的 ime_switcher（左段输入法键）
+                        if (landscapeMode && !isSearch) {
+                            child.setVisibility(View.GONE);
+                            XposedBridge.log(TAG + ": [B] landscape hid non-search ime_switcher");
+                        }
                     }
-                    if (child instanceof ImageView && isSearchButton((ImageView) child)) {
+                    if (child instanceof ImageView && isMarkedSearchButton((ImageView) child)) {
                         setupSearchButton((ImageView) child);
                     }
                     if (child instanceof android.view.ViewGroup) {
@@ -963,6 +1065,224 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
     }
 
     /**
+     * 阶段A：在 inflateLayout 完成后，直接基于结构标记右段搜索键。
+     * 依据：右段最后一个 recent 左侧的 ime_switcher 即搜索键。
+     */
+    private void markSearchButtonsFromInflater(Object inflater) {
+        try {
+            Object h = getField(inflater, "mHorizontal");
+            Object v = getField(inflater, "mVertical");
+            markSearchButtonsInContainer(h);
+            markSearchButtonsInContainer(v);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": markSearchButtonsFromInflater err: " + t);
+        }
+    }
+
+    private void markSearchButtonsInContainer(Object container) {
+        try {
+            if (!(container instanceof ViewGroup)) return;
+            ViewGroup root = (ViewGroup) container;
+            // DFS 遍历顺序等价于视觉左到右顺序（不依赖 getLocationOnScreen，创建后即可用）
+            java.util.List<View> ordered = new java.util.ArrayList<View>();
+            collectViewsOrdered(root, ordered);
+            if (ordered.isEmpty()) return;
+
+            // 找最后一个 recent 的索引，往前找最近的 ime_switcher —— 即右段搜索键
+            int recentIdx = -1;
+            for (int i = 0; i < ordered.size(); i++) {
+                if (isRecentView(ordered.get(i))) recentIdx = i;
+            }
+            if (recentIdx < 0) return;
+            for (int i = recentIdx - 1; i >= 0; i--) {
+                View c = ordered.get(i);
+                if (c.getId() == ID_IME_SWITCHER && c instanceof ImageView) {
+                    ImageView iv = (ImageView) c;
+                    if (searchMarkedViews.add(iv)) {
+                        XposedBridge.log(TAG + ": [A] marked search button id=0x"
+                                + Integer.toHexString(iv.getId())
+                                + " cls=" + iv.getClass().getSimpleName());
+                    }
+                    // 立刻请求重排，避免首次显示时先按旧测量尺寸显示再变大
+                    try {
+                        iv.requestLayout();
+                        View p = iv.getParent() instanceof View ? (View) iv.getParent() : null;
+                        if (p != null) p.requestLayout();
+                        View gp = p != null && p.getParent() instanceof View ? (View) p.getParent() : null;
+                        if (gp != null) gp.requestLayout();
+                    } catch (Throwable ignored) { }
+                    // 标记后立即配置行为与 margin（不碰图标，图标交给 before hook 替换），
+                    // 解决“位置先偏右贴 recent，800ms 后才调正”的问题。
+                    setupSearchButton(iv, false);
+                    break;
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": markSearchButtonsInContainer err: " + t);
+        }
+    }
+
+    private void collectViewsOrdered(ViewGroup vg, java.util.List<View> out) {
+        for (int i = 0; i < vg.getChildCount(); i++) {
+            View c = vg.getChildAt(i);
+            if (c.getId() == ID_IME_SWITCHER || isRecentView(c)) {
+                out.add(c);
+            }
+            if (c instanceof ViewGroup) {
+                collectViewsOrdered((ViewGroup) c, out);
+            }
+        }
+    }
+
+    private boolean isMarkedSearchButton(ImageView iv) {
+        return searchMarkedViews.contains(iv);
+    }
+
+    /**
+     * 在 ButtonDispatcher 层设置搜索键的点击/长按监听。
+     * 这样 dispatcher 管理的横竖屏两个 View 都会继承同一个监听器，
+     * 解决横屏时搜索键点击变成输入法切换的问题。
+     */
+    private void setupSearchDispatcherListeners(Object dispatcher) {
+        try {
+            if (dispatcher == null) return;
+            // 单击 = 语音助手
+            XposedHelpers.callMethod(dispatcher, "setOnClickListener", new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    XposedBridge.log(TAG + ": search CLICK(dispatcher) -> voice assist");
+                    invokeAssist(v, 5, false);
+                }
+            });
+            // 长按 = 识屏
+            XposedHelpers.callMethod(dispatcher, "setOnLongClickListener", new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View v) {
+                    XposedBridge.log(TAG + ": search LONGCLICK(dispatcher) -> screen recognition");
+                    invokeAssist(v, 6, true);
+                    return true;
+                }
+            });
+            XposedBridge.log(TAG + ": search dispatcher listeners set");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": setupSearchDispatcherListeners err: " + t);
+        }
+    }
+
+    /**
+     * 在搜索键所属的导航栏容器里找到 recent（任务键）View。
+     * 用于横屏时给 recent 设 topMargin 来推开搜索键（bottomMargin 在 ReverseRelativeLayout 里不生效）。
+     * 从搜索键向上找第一个包含 recent 的父容器，再在该容器内 DFS 找 recent。
+     */
+    private View findRecentSibling(ImageView iv) {
+        try {
+            android.view.ViewParent p = iv.getParent();
+            while (p instanceof ViewGroup) {
+                ViewGroup scope = (ViewGroup) p;
+                View r = findRecentRecursive(scope, iv);
+                if (r != null) {
+                    XposedBridge.log(TAG + ": findRecentSibling found recent in " + scope.getClass().getSimpleName());
+                    return r;
+                }
+                p = scope.getParent();
+            }
+            XposedBridge.log(TAG + ": findRecentSibling no recent found");
+            return null;
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": findRecentSibling err: " + t);
+            return null;
+        }
+    }
+
+    /**
+     * 更严格的结构判定：仅在同一父容器链下，iv 是 recent 左侧最近的 ime_switcher 才认为是搜索键。
+     * 避免把左段输入法键误标。
+     */
+    private boolean isSearchButtonStructuralStrict(ImageView iv) {
+        try {
+            View recent = null;
+            android.view.ViewParent p = iv.getParent();
+            ViewGroup scope = null;
+            while (p instanceof ViewGroup) {
+                scope = (ViewGroup) p;
+                View r = findRecentRecursive(scope, iv);
+                if (r != null) {
+                    recent = r;
+                    break;
+                }
+                p = scope.getParent();
+            }
+            if (scope == null || recent == null) return false;
+
+            java.util.List<View> ordered = new java.util.ArrayList<View>();
+            collectViewsOrdered(scope, ordered);
+            int recentIdx = -1;
+            for (int i = 0; i < ordered.size(); i++) {
+                if (ordered.get(i) == recent) {
+                    recentIdx = i;
+                    break;
+                }
+            }
+            if (recentIdx <= 0) return false;
+            for (int i = recentIdx - 1; i >= 0; i--) {
+                View c = ordered.get(i);
+                if (c.getId() == ID_IME_SWITCHER) {
+                    return c == iv;
+                }
+            }
+            return false;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 判断 ButtonDispatcher 当前是否服务于搜索键。
+     * ime_switcher 的 dispatcher 同时管理左段输入法键和右段搜索键，
+     * 因此不能仅凭 dispatcher id 判断；需其当前 View(mCurrentView) 是已标记搜索键才替换，
+     * 避免误伤左段输入法键。
+     */
+    private boolean isSearchDispatcher(Object dispatcher) {
+        try {
+            if (dispatcher == null) return false;
+            if (!searchMarkedDispatchers.contains(dispatcher)) return false;
+            Object current = getField(dispatcher, "mCurrentView");
+            if (current instanceof ImageView && isMarkedSearchButton((ImageView) current)) {
+                return true;
+            }
+            // mCurrentView 可能尚未设置：遍历 mViews，若任一已注册 View 是搜索键也接受
+            Object views = getField(dispatcher, "mViews");
+            if (views instanceof java.util.List) {
+                java.util.List<?> list = (java.util.List<?>) views;
+                for (Object o : list) {
+                    if (o instanceof ImageView && isMarkedSearchButton((ImageView) o)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 阶段A：把传入 KeyButtonDrawable 的 childState 直接替换成 WP7 搜索图标 */
+    private boolean replaceSearchDrawable(Drawable incoming) {
+        try {
+            if (incoming == null) return false;
+            Object childState = createWp7ConstantState("SEARCH");
+            if (childState == null) return false;
+            Object stateField = getField(incoming, "mState");
+            if (stateField == null) return false;
+            setField(stateField, "mChildState", childState);
+            return true;
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": replaceSearchDrawable err: " + t);
+            return false;
+        }
+    }
+
+    /**
      * 把系统原生 menu 键配置为 WP 风格搜索按钮：
      *  - 设为可见、可点击
      *  - 禁用系统 MENU 键码（mCode=0），使点击走 OnClick
@@ -971,71 +1291,88 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
      * 只改动 menu 键自身，不碰其父容器，避免破坏布局。
      */
     private void setupSearchButton(ImageView iv) {
+        setupSearchButton(iv, true);
+    }
+
+    private void setupSearchButton(ImageView iv, boolean applyDrawable) {
         try {
             int id = iv.getId();
-            // 搜索键开关（search_button）：关闭则不配置，保持系统默认（普通输入法切换键）
             if (!isSearchButtonEnabled(iv)) {
                 XposedBridge.log(TAG + ": search button disabled, skip setup id=0x" + Integer.toHexString(id));
                 return;
             }
             XposedBridge.log(TAG + ": setupSearchButton enter id=0x" + Integer.toHexString(id)
                     + " vis=" + iv.getVisibility() + " drawable=" + (iv.getDrawable() != null)
-                    + " mCode=" + getField(iv, "mCode"));
+                    + " mCode=" + getField(iv, "mCode") + " applyDrawable=" + applyDrawable);
             iv.setVisibility(View.VISIBLE);
             iv.setClickable(true);
             iv.setLongClickable(true);
 
-            // 禁用系统 key 分发（mCode=0）
             try {
                 XposedHelpers.setObjectField(iv, "mCode", 0);
             } catch (Throwable t) {
                 XposedBridge.log(TAG + ": search set mCode err: " + t);
             }
 
-            // 替换图标为放大镜：用【独立】KeyButtonDrawable 包裹放大镜（v38 方案，能显示放大镜），
-            // 颜色适配通过后续 setDarkIntensity 诊断处理。
-            try {
-                Drawable kd = createSearchKeyButtonDrawable(iv, iv.getClass().getClassLoader());
-                if (kd != null) {
-                    iv.setImageDrawable(kd);
-                    iv.invalidate();
-                    XposedBridge.log(TAG + ": search set KeyButtonDrawable success");
-                } else {
-                    setField(iv, "mDrawable", new Wp7IconDrawable(dp(32), ICON_COLOR, "SEARCH"));
-                    iv.invalidate();
+            if (applyDrawable) {
+                try {
+                    Drawable kd = createSearchKeyButtonDrawable(iv, iv.getClass().getClassLoader());
+                    if (kd != null) {
+                        iv.setImageDrawable(kd);
+                        iv.invalidate();
+                        XposedBridge.log(TAG + ": search set KeyButtonDrawable success");
+                    } else {
+                        setField(iv, "mDrawable", new Wp7IconDrawable(dp(32), ICON_COLOR, "SEARCH"));
+                        iv.invalidate();
+                    }
+                } catch (Throwable t) {
+                    XposedBridge.log(TAG + ": search create KeyButtonDrawable err: " + t);
                 }
-            } catch (Throwable t) {
-                XposedBridge.log(TAG + ": search create KeyButtonDrawable err: " + t);
             }
 
-            // 搜索键不淡化：设为完全不透明，与 back/home 一致（输入法键才淡化）
             try {
                 iv.setAlpha(1.0f);
-            } catch (Throwable t) { /* ignore */ }
+            } catch (Throwable t) { }
 
-            // 位置对称：给搜索键设置右边距，让它与 recent 拉开间距，匹配左侧 back 的对称布局。
-            // 仅在横排（竖屏）导航栏时加横向 margin；横屏竖排时不加，避免把图标横向挪出可视区。
             try {
                 int orient = iv.getResources().getConfiguration().orientation;
                 boolean horizontalNav = (orient == android.content.res.Configuration.ORIENTATION_PORTRAIT);
                 XposedBridge.log(TAG + ": search orient=" + orient + " horizontalNav=" + horizontalNav);
-                if (horizontalNav) {
-                    android.view.ViewGroup.LayoutParams lp = iv.getLayoutParams();
-                    if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
-                        android.view.ViewGroup.MarginLayoutParams mlp = (android.view.ViewGroup.MarginLayoutParams) lp;
-                        int gap = dp(36); // 与 recent 的间距（约 108px）
+                android.view.ViewGroup.LayoutParams lp = iv.getLayoutParams();
+                if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
+                    android.view.ViewGroup.MarginLayoutParams mlp = (android.view.ViewGroup.MarginLayoutParams) lp;
+                    int gap = dp(36);
+                    if (horizontalNav) {
+                        // 竖屏横排：搜索键在 recent 左侧，用 marginEnd 拉开水平间距，清除 bottomMargin
+                        mlp.bottomMargin = 0;
                         mlp.setMarginEnd(gap);
-                        iv.setLayoutParams(mlp);
-                        iv.requestLayout();
-                        XposedBridge.log(TAG + ": search margin set mEnd=" + gap);
+                        XposedBridge.log(TAG + ": search margin set mEnd=" + gap + " bottom=0");
+                    } else {
+                        // 横屏竖排：搜索键在 recent 上方。bottomMargin 在 ReverseRelativeLayout 里可能不生效，
+                        // 改为给 recent 设 topMargin 来推开搜索键。
+                        mlp.setMarginEnd(0);
+                        mlp.bottomMargin = 0;
+                        XposedBridge.log(TAG + ": search margin clear (landscape)");
+                        // 找到 recent 并设 topMargin
+                        View recent = findRecentSibling(iv);
+                        if (recent != null) {
+                            android.view.ViewGroup.LayoutParams rlp = recent.getLayoutParams();
+                            if (rlp instanceof android.view.ViewGroup.MarginLayoutParams) {
+                                android.view.ViewGroup.MarginLayoutParams rmlp = (android.view.ViewGroup.MarginLayoutParams) rlp;
+                                rmlp.topMargin = gap;
+                                recent.setLayoutParams(rmlp);
+                                recent.requestLayout();
+                                XposedBridge.log(TAG + ": recent topMargin set=" + gap);
+                            }
+                        }
                     }
+                    iv.setLayoutParams(mlp);
+                    iv.requestLayout();
                 }
             } catch (Throwable t) {
                 XposedBridge.log(TAG + ": search margin err: " + t);
             }
 
-            // 单击 / 长按触发助手
-            // 单击 = 语音对话；长按 = 识屏（与系统：长按home=识屏、长按任务键=语音一致）
             iv.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -1052,8 +1389,8 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 }
             });
 
-            // 记录搜索键 View，供 setDarkIntensity 转发
             searchBtnView = iv;
+            searchMarkedViews.add(iv);
             XposedBridge.log(TAG + ": search button configured id=0x" + Integer.toHexString(id));
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": setupSearchButton err: " + t);
