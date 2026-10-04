@@ -2,6 +2,14 @@
 把 **HyperOS 3（K70 Ultra / Android 16）** 三键导航栏定制为 **Windows Phone 7 风格**：
 【返回】【主页】图标换成 WP7 样式，并新增一个**任务键左侧的 WP7 风格搜索键**（放大镜）。
 纯 LSPosed Hook，**不修改 SystemUI APK、不替换系统资源**。
+
+## 横竖屏行为（第一阶段）
+| 方向 | 布局 | 说明 |
+|------|------|------|
+| **竖屏** | Back + Home + **Search** | Search 由 ime_switcher 伪装；Recent 移到最右 |
+| **横屏** | Back + Home + **Recent** | **Recent 完全由 SystemUI 原生管理**，模块不注入 Search、不碰 Recent / ime_switcher |
+
+> 第一阶段目标（方案）：横屏彻底放手，优先修复"横屏多任务键失灵"。横屏 Search 留待第二阶段研究系统原生 ButtonDispatcher 机制后实现（Back+Home+Search+Recent 四个独立键）。
 ## 功能效果
 | 按键 | WP7 风格 | 状态 |
 |------|---------|------|
@@ -81,7 +89,14 @@ wp7-navbar/
 │       ├── assets/xposed_init           # LSPosed 入口
 │       └── java/com/wp7/navbar/
 │           ├── MainActivity.java        # 模块设置界面（Material 风格，动态构建）
-│           ├── Wp7NavbarHook.java       # 核心 Hook（布局注入 + 搜索键 + 图标替换）
+│           ├── Wp7NavbarHook.java       # Xposed 纯入口：挂载 hook + 生命周期分发
+│           ├── NavigationBarController.java      # orientation 状态机（PORTRAIT/LANDSCAPE）
+│           ├── PortraitNavigationController.java  # 竖屏：Back/Home 图标 + Search 配置
+│           ├── LandscapeNavigationController.java # 横屏：仅 Back/Home 图标，Recent 完全原生
+│           ├── SearchButtonController.java        # 竖屏 Search（ime_switcher 伪装 + 布局注入）
+│           ├── Wp7IconController.java   # Back/Home/Search WP7 图标替换（只改 drawable）
+│           ├── SystemUiIds.java         # SystemUI 资源 ID 集中管理
+│           ├── SystemUiReflection.java  # 反射工具集中类
 │           ├── Wp7IconDrawable.java     # WP7 图标：纯代码 Canvas 矢量绘制
 │           ├── SettingsStore.java       # 设置持久化（SharedPreferences）
 │           ├── Wp7SettingsProvider.java # 跨进程设置读取（ContentProvider）
