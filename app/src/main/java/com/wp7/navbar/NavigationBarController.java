@@ -26,6 +26,10 @@ public final class NavigationBarController {
     /** 导航栏方向状态（方案第二十节：整个项目只有两个主要状态）。 */
     enum NavBarOrientation { PORTRAIT, LANDSCAPE }
 
+    /** 全局当前方向（供 getDefaultLayout 等无 View 上下文处使用，避免 Configuration 更新滞后）。
+     *  由 onAttached / onConfigurationChanged 更新，时序与 SystemUI 配置回调一致。 */
+    public static volatile NavBarOrientation sCurrentOrientation = NavBarOrientation.PORTRAIT;
+
     private final WeakReference<View> navBarViewRef;
     private NavBarOrientation orientation;
     private PortraitNavigationController portraitController;
@@ -51,6 +55,7 @@ public final class NavigationBarController {
     /** 导航栏挂载时调用（onAttachedToWindow）。 */
     public void onAttached() {
         XposedBridge.log(TAG + ": onAttached orient=" + orientation);
+        sCurrentOrientation = orientation;
         applyCurrent();
     }
 
@@ -59,6 +64,7 @@ public final class NavigationBarController {
         NavBarOrientation newOrientation =
                 newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
                         ? NavBarOrientation.LANDSCAPE : NavBarOrientation.PORTRAIT;
+        sCurrentOrientation = newOrientation;
         if (newOrientation == orientation) {
             XposedBridge.log(TAG + ": onConfigurationChanged, orientation unchanged (" + orientation + "), skip rebuild");
             return;

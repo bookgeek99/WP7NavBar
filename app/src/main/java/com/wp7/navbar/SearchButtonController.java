@@ -45,6 +45,10 @@ public final class SearchButtonController {
     // 防止 after hook 重设监听器时递归
     static boolean inRestoreListener = false;
 
+    // 记录"最后一次触摸发生在已标记搜索键上的时间"，供 onImeSwitcherClick 判断点击来源。
+    // 旋转重建后 OnClick 可能丢失（系统重置），但 OnTouchListener 由我们重设，仍可靠记录。
+    static volatile long lastSearchTouchTime = 0;
+
     // 从 back/home 读取的颜色 / 阴影，让搜索键与它们对齐（首次读取后缓存）
     static int refLightColor = 0;
     static int refDarkColor = 0;
@@ -70,12 +74,12 @@ public final class SearchButtonController {
             Object result = param.getResult();
             if (!(result instanceof String)) return;
             String orig = (String) result;
-            // 关键（方案第二节）：横屏禁止注入 Search。横屏时只保留可选的左段输入法键注入，
-            // 右段 Search 注入（ime_switcher 伪装 + recent 移位）全部跳过，Recent 完全原生。
-            boolean landscape = isLandscape(inflater);
-            String injected = injectLayouts(orig, imeEnabled, searchBtn && !landscape);
+            // 关键（方案第二节）：横屏完全不碰——左段输入法键、右段 Search 全部不注入，Recent 完全原生。
+            // 用全局方向状态而非 inflater 的 Context Configuration（后者在旋转时更新滞后）。
+            boolean landscape = NavigationBarController.sCurrentOrientation
+                    == NavigationBarController.NavBarOrientation.LANDSCAPE;
+            String injected = injectLayouts(orig, imeEnabled && !landscape, searchBtn && !landscape);
             if (!injected.equals(orig)) {
-                XposedBridge.log(TAG + ": [inject] getDefaultLayout (landscape=" + landscape + ") -> " + injected);
                 param.setResult(injected);
             }
         } catch (Throwable t) {
@@ -169,8 +173,8 @@ public final class SearchButtonController {
 
     /**
      * 供 Wp7NavbarHook hook KeyButtonView.setImageDrawable 的 before 入口。
-     * 仅当当前 Configuration 为竖屏、且该 View 是右段搜索键时才替换图标，
-     * 避免首次绘制闪现错误图标。横屏一律跳过，保持系统原生 ime_switcher。
+     * 仅当：竖屏 + 已被标记为右段搜索键（markedViews）时才替换图标。
+     * 严格不碰左段输入法键（即使它也是 ime_switcher id）——这是旧版回归的根源。
      */
     static void onSetImageDrawableBefore(de.robv.android.xposed.XC_MethodHook.MethodHookParam param) {
         try {
@@ -179,14 +183,10 @@ public final class SearchButtonController {
             if (iv.getId() != SystemUiIds.ID_IME_SWITCHER) return;
             // 横屏：不做任何 Search 替换，保持系统原生
             if (isLandscape(iv)) return;
-            boolean marked = markedViews.contains(iv);
-            if (!marked && isSearchButtonStructuralStrict(iv)) {
-                markedViews.add(iv);
-                marked = true;
-            }
-            if (!marked) return;
-            Drawable incoming = param.args != null && param.args.length > 0
-                    ? (Drawable) param.args[0] : null;
+
+            // 只替换"已被标记为右段搜索键"的 View。标记统一由 PortraitNavigationController
+            // 的 OnPreDrawListener（layout 后 X 坐标有效）完成，不在此做即时标记。
+            if (!markedViews.contains(iv)) return;
             Drawable kd = createSearchKeyButtonDrawable(iv, iv.getClass().getClassLoader());
             if (kd != null) {
                 param.args[0] = kd;
@@ -207,41 +207,26 @@ public final class SearchButtonController {
         }
     }
 
-    /**
-     * 更严格的结构判定：仅在同一父容器链下，iv 是 recent 左侧最近的 ime_switcher 才认为是搜索键。
-     * 避免把左段输入法键误标。
-     */
-    static boolean isSearchButtonStructuralStrict(ImageView iv) {
-        try {
-            if (iv.getId() != SystemUiIds.ID_IME_SWITCHER) return false;
-            View recent = null;
-            android.view.ViewParent p = iv.getParent();
-            android.view.ViewGroup scope = null;
-            while (p instanceof android.view.ViewGroup) {
-                scope = (android.view.ViewGroup) p;
-                View r = Wp7IconController.findRecentRecursive(scope, iv);
-                if (r != null) { recent = r; break; }
-                p = scope.getParent();
-            }
-            if (scope == null || recent == null) return false;
+    // =====================================================================
+    // 搜索键配置：可见性 / 行为 / margin / 监听器
+    // =====================================================================
 
-            List<View> ordered = new ArrayList<View>();
-            collectViewsOrdered(scope, ordered);
-            int recentIdx = -1;
-            for (int i = 0; i < ordered.size(); i++) {
-                if (ordered.get(i) == recent) { recentIdx = i; break; }
+    private static void collectImeSwitchersRecursive(android.view.ViewGroup vg, List<ImageView> out) {
+        for (int i = 0; i < vg.getChildCount(); i++) {
+            View c = vg.getChildAt(i);
+            if (c instanceof ImageView && c.getId() == SystemUiIds.ID_IME_SWITCHER) {
+                out.add((ImageView) c);
             }
-            if (recentIdx <= 0) return false;
-            for (int i = recentIdx - 1; i >= 0; i--) {
-                View c = ordered.get(i);
-                if (c.getId() == SystemUiIds.ID_IME_SWITCHER) {
-                    return c == iv;
-                }
+            if (c instanceof android.view.ViewGroup) {
+                collectImeSwitchersRecursive((android.view.ViewGroup) c, out);
             }
-            return false;
-        } catch (Throwable t) {
-            return false;
         }
+    }
+
+    private static int getScreenX(View v) {
+        int[] loc = new int[2];
+        v.getLocationOnScreen(loc);
+        return loc[0];
     }
 
     /** DFS 收集 ime_switcher / recent 视图（按视觉左到右顺序）。 */
@@ -316,13 +301,11 @@ public final class SearchButtonController {
 
             View.OnClickListener clickListener = new View.OnClickListener() {
                 @Override public void onClick(View v) {
-                    XposedBridge.log(TAG + ": search CLICK -> voice assist");
                     invokeAssist(v, 5, false);
                 }
             };
             View.OnLongClickListener longClickListener = new View.OnLongClickListener() {
                 @Override public boolean onLongClick(View v) {
-                    XposedBridge.log(TAG + ": search LONGCLICK -> screen recognition");
                     invokeAssist(v, 6, true);
                     return true;
                 }
@@ -333,6 +316,16 @@ public final class SearchButtonController {
             inRestoreListener = false;
             clickListeners.put(iv, clickListener);
             longClickListeners.put(iv, longClickListener);
+
+            // OnTouchListener：按下时记录"触摸发生在搜索键上"，供 onImeSwitcherClick 区分点击来源
+            iv.setOnTouchListener(new View.OnTouchListener() {
+                @Override public boolean onTouch(View v, android.view.MotionEvent e) {
+                    if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) {
+                        lastSearchTouchTime = android.os.SystemClock.uptimeMillis();
+                    }
+                    return false; // 不消费，继续传递
+                }
+            });
 
             markedViews.add(iv);
             XposedBridge.log(TAG + ": search button configured id=0x" + Integer.toHexString(iv.getId()));

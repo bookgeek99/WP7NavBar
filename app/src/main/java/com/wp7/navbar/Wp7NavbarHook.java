@@ -49,6 +49,109 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
         hookKeyButtonSetImageDrawable(lpparam);
         hookGetDefaultLayout(lpparam);
         hookNavigationBarViewLifecycle(lpparam);
+        hookImeWindowStatus(lpparam);
+
+        XposedBridge.log(TAG + ": all hooks setup done");
+    }
+
+    // =====================================================================
+    // Hook 4: NavigationBar.setImeWindowStatus —— IME 弹出时显示左段输入法键
+    // =====================================================================
+
+    /**
+     * Hook NavigationBar.setImeWindowStatus：IME 弹出/收起时更新左段输入法键可见性。
+     * 这是精确控制（只动左段 ime_switcher），替代旧版全局 View.setVisibility hook（已删）。
+     * 左段输入法键与右段搜索键同为 ime_switcher id，需排除已标记为搜索键的 View。
+     */
+    private void hookImeWindowStatus(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> navBarCls = SystemUiReflection.findClass(
+                    "com.android.systemui.navigationbar.views.NavigationBar", lpparam.classLoader);
+            if (navBarCls == null) return;
+
+            XposedBridge.hookAllMethods(navBarCls, "setImeWindowStatus", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Object navBar = param.thisObject;
+                        Object imeVisible = SystemUiReflection.getFieldQuiet(navBar, "mImeVisible");
+                        if (!(imeVisible instanceof Boolean)) return;
+                        boolean show = (Boolean) imeVisible;
+                        Object navBarView = SystemUiReflection.getFieldQuiet(navBar, "mView");
+                        if (!(navBarView instanceof View)) return;
+                        updateLeftImeSwitcherVisibility((View) navBarView, show);
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": setImeWindowStatus after err: " + t);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": hooked setImeWindowStatus");
+
+            // 点击左段输入法键时弹出"输入法选择菜单"（而非系统默认的循环切换）。
+            // 排除右段搜索键：搜索键已 mCode=0 且应走自定义 OnClick（呼小爱），
+            // 若其点击冒泡到 onImeSwitcherClick，会误弹菜单，故在 before 里拦截判断。
+            XposedBridge.hookAllMethods(navBarCls, "onImeSwitcherClick", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        // 若 500ms 内有搜索键被触摸（ACTION_DOWN 记录），说明本次点击来自搜索键，
+                        // 不弹输入法菜单，交给搜索键的 OnClick（呼小爱）。旋转后 OnClick 丢失时，
+                        // 这里阻断系统循环切换，搜索键的 OnTouchListener 仍记录了触摸。
+                        long elapsed = android.os.SystemClock.uptimeMillis()
+                                - SearchButtonController.lastSearchTouchTime;
+                        if (elapsed >= 0 && elapsed < 500) {
+                            param.setResult(null);
+                            return;
+                        }
+                        Object imm = SystemUiReflection.getFieldQuiet(param.thisObject, "mInputMethodManager");
+                        Object displayIdObj = SystemUiReflection.getFieldQuiet(param.thisObject, "mDisplayId");
+                        if (imm != null && displayIdObj instanceof Integer) {
+                            int displayId = (Integer) displayIdObj;
+                            SystemUiReflection.call(imm, "showInputMethodPickerFromSystem", true, displayId);
+                            param.setResult(null);
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": onImeSwitcherClick hook err: " + t);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": hooked onImeSwitcherClick");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hookImeWindowStatus err: " + t);
+        }
+    }
+
+    /**
+     * 根据 IME 可见性更新左段输入法键（非搜索键的 ime_switcher）的可见性。
+     * 遍历导航栏下所有 ime_switcher，跳过已标记为搜索键的 View（右段），
+     * 其余（左段输入法键）按 IME 状态设 VISIBLE/GONE。
+     */
+    private void updateLeftImeSwitcherVisibility(View navBarView, boolean imeVisible) {
+        // 横屏完全不碰 ime_switcher（保持系统原生），仅在竖屏调整左段输入法键可见性。
+        if (NavigationBarController.sCurrentOrientation
+                == NavigationBarController.NavBarOrientation.LANDSCAPE) {
+            return;
+        }
+        updateLeftImeSwitcherRecursive(navBarView, imeVisible);
+    }
+
+    private void updateLeftImeSwitcherRecursive(View v, boolean imeVisible) {
+        try {
+            if (v instanceof ImageView && v.getId() == SystemUiIds.ID_IME_SWITCHER
+                    && !SearchButtonController.markedViews.contains(v)) {
+                int want = imeVisible ? View.VISIBLE : View.GONE;
+                if (v.getVisibility() != want) {
+                    v.setVisibility(want);
+                    XposedBridge.log(TAG + ": left ime_switcher -> " + (imeVisible ? "VISIBLE" : "GONE"));
+                }
+            }
+            if (v instanceof android.view.ViewGroup) {
+                android.view.ViewGroup vg = (android.view.ViewGroup) v;
+                for (int i = 0; i < vg.getChildCount(); i++) {
+                    updateLeftImeSwitcherRecursive(vg.getChildAt(i), imeVisible);
+                }
+            }
+        } catch (Throwable ignored) { }
     }
 
     // =====================================================================
@@ -103,10 +206,63 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                     SearchButtonController.onGetDefaultLayout(param);
                 }
             });
-            XposedBridge.log(TAG + ": hooked getDefaultLayout");
+
+            // hook inflateLayout：横屏时清理布局串里的 ime_switcher；布局完成后标记竖屏搜索键。
+            XposedBridge.hookAllMethods(inflaterCls, "inflateLayout", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                            String layoutStr = (String) param.args[0];
+                            // 横屏时移除传入布局串里的 ime_switcher（可能来自竖屏串缓存），
+                            // 还原为系统原生串，避免横屏出现多余输入法键。
+                            if (NavigationBarController.sCurrentOrientation
+                                    == NavigationBarController.NavBarOrientation.LANDSCAPE) {
+                                String cleaned = removeImeSwitchers(layoutStr);
+                                if (!cleaned.equals(layoutStr)) {
+                                    param.args[0] = cleaned;
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) { }
+                }
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    // 布局刚 inflate 完，此时 recent / ime_switcher 都已创建且结构稳定，
+                    // 是标记右段搜索键的最佳时机（onAttachedToWindow 时 recent 可能尚未 inflate）
+                    try {
+                        if (param.thisObject instanceof View) {
+                            PortraitNavigationController.applyToRoot((View) param.thisObject);
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": inflateLayout after mark err: " + t);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": hooked getDefaultLayout + inflateLayout");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hookGetDefaultLayout err: " + t);
         }
+    }
+
+    /** 从布局串（形如 "a[x],b;c;d[x],e"）中移除所有 ime_switcher token（连同 weight）。 */
+    private static String removeImeSwitchers(String layout) {
+        if (layout == null || !layout.contains("ime_switcher")) return layout;
+        String[] parts = layout.split(";", -1);
+        for (int i = 0; i < parts.length; i++) {
+            String[] items = parts[i].split(",", -1);
+            StringBuilder sb = new StringBuilder();
+            for (String it : items) {
+                String name = it.trim();
+                int br = name.indexOf('[');
+                if (br >= 0) name = name.substring(0, br).trim();
+                if (name.equals("ime_switcher")) continue;
+                if (sb.length() > 0) sb.append(",");
+                sb.append(it);
+            }
+            parts[i] = sb.toString();
+        }
+        return String.join(";", parts);
     }
 
     // =====================================================================

@@ -9,15 +9,13 @@ import de.robv.android.xposed.XposedBridge;
  *
  * 横屏最终目标（第一阶段）：Back + Home + Recent，其中 Recent 完全由 SystemUI 原生管理。
  *
- * 本 controller 极简，只允许：
- *  - Back 图标替换
- *  - Home 图标替换
- * （这两者实际由 Wp7IconController 在 setImageDrawable hook 统一处理，这里只做日志确认）
+ * 本 controller 只允许：
+ *  - Back / Home 图标替换（由 Wp7IconController 在 setImageDrawable hook 统一处理）
+ *  - 清理任何残留的 ime_switcher（横屏布局不应出现输入法键）
  *
  * 明确不做（方案第八/十一/十八节）：
  *  - 不创建 Search
  *  - 不修改 Recent（drawable / visibility / click / dispatcher / layout / margin 全部不动）
- *  - 不修改横屏 ime_switcher（保持系统原生）
  *  - 不注入、不改变横屏 layout XML
  */
 public final class LandscapeNavigationController {
@@ -30,12 +28,30 @@ public final class LandscapeNavigationController {
         this.navBarView = navBarView;
     }
 
-    /** 横屏应用：仅确认 Back/Home 图标替换由统一 hook 处理，Recent/ime_switcher 完全不动。 */
+    /** 横屏应用：Back/Home 图标由统一 hook 处理；清理残留 ime_switcher。 */
     void apply() {
-        XposedBridge.log(TAG + ": landscape apply — back/home icon only, recent untouched");
-        // Back/Home 图标替换在 KeyButtonView.setImageDrawable hook 中统一执行（Wp7IconController.applyIfWp7），
-        // 该 hook 只改 drawable 不碰行为，因此横屏 Recent 的可见性/点击/布局完全由 SystemUI 原生管理。
-        // 这里不需要也不允许对横屏视图做任何额外修改。
+        // 横屏布局可能复用了竖屏注入的串（含 ime_switcher），强制把横屏所有 ime_switcher 设 GONE。
+        try {
+            hideAllImeSwitchers(navBarView);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": landscape hideIme err: " + t);
+        }
+    }
+
+    private void hideAllImeSwitchers(View v) {
+        try {
+            if (v instanceof android.widget.ImageView && v.getId() == SystemUiIds.ID_IME_SWITCHER) {
+                if (v.getVisibility() != View.GONE) {
+                    v.setVisibility(View.GONE);
+                }
+            }
+            if (v instanceof android.view.ViewGroup) {
+                android.view.ViewGroup vg = (android.view.ViewGroup) v;
+                for (int i = 0; i < vg.getChildCount(); i++) {
+                    hideAllImeSwitchers(vg.getChildAt(i));
+                }
+            }
+        } catch (Throwable ignored) { }
     }
 
     @SuppressWarnings("unused")
