@@ -22,11 +22,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Install Android SDK components
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          SDK="${ANDROID_HOME}"
+          # ubuntu-latest runner 自带 Android SDK（含 cmdline-tools），只补装缺失的组件。
+          yes | "${SDK}/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "${SDK}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" > /dev/null
+          echo "ANDROID_HOME=${SDK}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${SDK}" >> "$GITHUB_ENV"
 
       - name: Remove local aapt2 override
-        # gradle.properties 里的 aapt2FromMavenOverride 仅用于本地 arm64 容器，
+        # gradle.properties 的 aapt2FromMavenOverride 仅用于本地 arm64 容器，
         # CI（x86_64）必须移除，否则 aapt2 无法执行。
         run: sed -i '/aapt2FromMavenOverride/d' gradle.properties
 
@@ -47,13 +58,6 @@ jobs:
         with:
           name: WP7NavBar-apk
           path: app/build/outputs/apk/release/*.apk
-
-      - name: Extract version
-        id: version
-        run: |
-          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
-          echo "apk=$APK" >> $GITHUB_OUTPUT
-          echo "name=$(basename "$APK")" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
