@@ -80,6 +80,19 @@ public final class LandscapeProbe {
                     .append(v.getRight()).append(",").append(v.getBottom()).append("]");
             sb.append(" clickable=").append(v.isClickable());
             sb.append(" longClickable=").append(v.isLongClickable());
+            // [GROUP_MAPPING 只读] 附加 LayoutParams + parent
+            try {
+                android.view.ViewGroup.LayoutParams lp = v.getLayoutParams();
+                if (lp != null) {
+                    sb.append(" lp=").append(lp.getClass().getSimpleName())
+                      .append("{w=").append(lp.width).append(",h=").append(lp.height);
+                    if (lp instanceof android.widget.LinearLayout.LayoutParams) {
+                        sb.append(",weight=").append(((android.widget.LinearLayout.LayoutParams) lp).weight);
+                    }
+                    sb.append("}");
+                }
+                sb.append(" parent=").append(simpleName(v.getParent()));
+            } catch (Throwable ignored) { }
             CharSequence cd = v.getContentDescription();
             sb.append(" cd=").append(cd == null ? "null" : "\"" + cd + "\"");
             // mCode（KeyButtonView 专有）

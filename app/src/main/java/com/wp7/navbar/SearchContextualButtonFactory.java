@@ -197,8 +197,26 @@ public final class SearchContextualButtonFactory {
                 log("inflateSearchButton: LayoutInflater null, skip");
                 return;
             }
+            // [2C-5 实验] 把 Search 放进 center_group（与 home 同组），而不是 ends_group。
+            //   原因：ends_group(match_parent, z下) 与 center_group(wrap+center, z上) 是叠层，
+            //   放 ends_group 中间必然与 home 重叠（见 2C4_LAYOUT_OVERLAP_REPORT.md）。
+            //   本实验只做竖屏；横屏暂不改架构（保持原 parent）。
+            ViewGroup targetParent = parent;
+            if (!landscape) {
+                ViewGroup cg = (inflaterView instanceof View)
+                        ? findViewGroupById((View) inflaterView, SystemUiIds.ID_NAV_CENTER_GROUP)
+                        : null;
+                if (cg != null) {
+                    targetParent = cg;
+                    log("2C5: target parent switched to center_group id=0x"
+                            + Integer.toHexString(SystemUiIds.ID_NAV_CENTER_GROUP)
+                            + " class=" + cg.getClass().getName());
+                } else {
+                    log("2C5: center_group not found, keep original parent");
+                }
+            }
             // inflate custom_key（KeyButtonView 模板，无 id）
-            View btn = li.inflate(SystemUiIds.LAYOUT_CUSTOM_KEY, parent, false);
+            View btn = li.inflate(SystemUiIds.LAYOUT_CUSTOM_KEY, targetParent, false);
             if (btn == null) {
                 log("inflateSearchButton: inflate custom_key returned null");
                 return;
@@ -211,13 +229,13 @@ public final class SearchContextualButtonFactory {
             //   wrapper.setDefaultGravity(g); wrapper.setGravity(g)
             //   wrapper.addView(btn, FrameLayout.LayoutParams(btn原LP))
             //   parent.addView(wrapper, LinearLayout.LayoutParams(keyWidth×weight, MATCH))
-            View wrapper = wrapWithReverseRelative(parent, btn, token, landscape);
+            View wrapper = wrapWithReverseRelative(targetParent, btn, token, landscape);
             if (wrapper != null) {
                 btn = wrapper; // 绑定/日志用 wrapper
             } else {
                 // 包装失败：退化为直接 addView
                 android.view.ViewGroup.LayoutParams lp = null;
-                if (parent instanceof android.widget.LinearLayout) {
+                if (targetParent instanceof android.widget.LinearLayout) {
                     int w = resolveKeyWidth(btn);
                     lp = new android.widget.LinearLayout.LayoutParams(w, android.view.ViewGroup.LayoutParams.MATCH_PARENT);
                 } else {
@@ -225,7 +243,7 @@ public final class SearchContextualButtonFactory {
                 }
                 float weight = parseWeight(token);
                 if (lp != null && weight > 0f && lp.width > 0) lp.width = (int)(lp.width * weight);
-                if (lp != null) parent.addView(btn, lp); else parent.addView(btn);
+                if (lp != null) targetParent.addView(btn, lp); else targetParent.addView(btn);
             }
             // 调用原系统 addToDispatchers(view) —— 让 SystemUI 自己完成绑定
             // （若已包装，传 wrapper：系统 addToDispatchers 会递归子 View 找到真正的 KeyButtonView）
@@ -236,12 +254,21 @@ public final class SearchContextualButtonFactory {
                     + " landscape=" + landscape
                     + " view=" + shortId(btn)
                     + " id=0x" + Integer.toHexString(btn.getId())
-                    + " parent=" + parent.getClass().getSimpleName()
-                    + " parentId=0x" + Integer.toHexString(parent.getId())
+                    + " parent=" + targetParent.getClass().getSimpleName()
+                    + " parentId=0x" + Integer.toHexString(targetParent.getId())
                     + " addToDispatchers=" + bound);
             dumpSearchDispatcher(inflaterView);
-            // [2C-4 前置分析] 只读：dump 整个段容器所有子 View 的完整 LayoutParams
-            dumpSegmentLayout(parent, landscape);
+            // [2C-5 实验] 布局完成后（post 到 UI 队列末尾）打印四键坐标 + 计算 home∩search 交集。
+            if (targetParent != null) {
+                final ViewGroup fp = targetParent;
+                final Object fiv = inflaterView;
+                final boolean fl = landscape;
+                targetParent.post(new Runnable() {
+                    @Override public void run() {
+                        dumpFourKeyRects(fiv, fp, fl);
+                    }
+                });
+            }
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": inflateSearchButton err: " + t);
         }
@@ -519,6 +546,122 @@ public final class SearchContextualButtonFactory {
     /** putInto 完成后（setButtonDispatchers after）dump Search dispatcher 状态。 */
     public static void dumpAfterBind(Object inflaterView) {
         dumpSearchDispatcher(inflaterView);
+    }
+
+    /** [2C-5] 从 root View 递归找指定 id 的 ViewGroup。 */
+    private static ViewGroup findViewGroupById(View root, int id) {
+        try {
+            if (root == null) return null;
+            if (root.getId() == id && root instanceof ViewGroup) return (ViewGroup) root;
+            if (root instanceof ViewGroup) {
+                ViewGroup vg = (ViewGroup) root;
+                for (int i = 0; i < vg.getChildCount(); i++) {
+                    ViewGroup r = findViewGroupById(vg.getChildAt(i), id);
+                    if (r != null) return r;
+                }
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
+    /**
+     * [2C-5 实验] 打印 back/home/search/recent 的屏幕矩形 + 计算 home∩search 交集。
+     * 全部通过 dispatcher.mViews 取【当前方向】的那个 View（landscape 取 [1]，竖屏取 [0]）。
+     * 只读，不改状态。
+     */
+    private static void dumpFourKeyRects(Object inflaterView, ViewGroup targetParent, boolean landscape) {
+        try {
+            Object dispatchersObj = SystemUiReflection.getFieldQuiet(inflaterView, "mButtonDispatchers");
+            if (!(dispatchersObj instanceof SparseArray)) { log("2C5 rect: dispatchers not SparseArray"); return; }
+            @SuppressWarnings("unchecked")
+            SparseArray<Object> dispatchers = (SparseArray<Object>) dispatchersObj;
+
+            int[] ids = new int[]{
+                    0x7f0b0153,                   // back
+                    0x7f0b0565,                   // home
+                    SystemUiIds.WP7_SEARCH_ID,    // search
+                    SystemUiIds.ID_RECENT_BUTTON  // recent
+            };
+            String[] names = new String[]{"back", "home", "search", "recent"};
+            int[] rects = new int[4 * 4]; // l,t,r,b per key
+
+            for (int k = 0; k < ids.length; k++) {
+                Object d = dispatchers.get(ids[k]);
+                if (d == null) { log("2C5 rect[" + names[k] + "]: dispatcher null"); continue; }
+                Object viewsObj = SystemUiReflection.getFieldQuiet(d, "mViews");
+                String vs = viewsObj == null ? "null" : viewsObj.getClass().getName();
+                log("2C5 rect[" + names[k] + "]: id=0x" + Integer.toHexString(ids[k])
+                        + " dispatcher=" + d.getClass().getSimpleName() + " mViews=" + vs);
+                // 取当前方向的 View
+                View v = pickDirectionalView(viewsObj, landscape);
+                if (v == null) { log("2C5   " + names[k] + ": no directional view"); continue; }
+                int[] loc = new int[2];
+                v.getLocationOnScreen(loc);
+                int w = v.getWidth(), h = v.getHeight();
+                rects[k * 4] = loc[0]; rects[k * 4 + 1] = loc[1];
+                rects[k * 4 + 2] = loc[0] + w; rects[k * 4 + 3] = loc[1] + h;
+                log("2C5   " + names[k] + ": class=" + v.getClass().getSimpleName()
+                        + " vis=" + v.getVisibility()
+                        + " rect=[" + loc[0] + "," + loc[1] + "," + (loc[0] + w) + "," + (loc[1] + h) + "]"
+                        + " w=" + w + " h=" + h);
+            }
+
+            // home(1) ∩ search(2)
+            int[] inter = intersect(rects, 1, 2);
+            log("2C5 INTERSECT home∩search = "
+                    + (inter == null ? "NONE(0)" : "[" + inter[0] + "," + inter[1] + "," + inter[2] + "," + inter[3]
+                    + "] area=" + Math.max(0, inter[2] - inter[0]) * Math.max(0, inter[3] - inter[1])));
+            // search(2) ∩ recent(3)
+            int[] ir2 = intersect(rects, 2, 3);
+            log("2C5 INTERSECT search∩recent = "
+                    + (ir2 == null ? "NONE(0)" : "[" + ir2[0] + "," + ir2[1] + "," + ir2[2] + "," + ir2[3] + "]"));
+            // back(0) ∩ home(1)
+            int[] ibh = intersect(rects, 0, 1);
+            log("2C5 INTERSECT back∩home = "
+                    + (ibh == null ? "NONE(0)" : "[" + ibh[0] + "," + ibh[1] + "," + ibh[2] + "," + ibh[3] + "]"));
+            // center_group 自身坐标
+            if (targetParent != null) {
+                int[] cl = new int[2];
+                targetParent.getLocationOnScreen(cl);
+                log("2C5 center_group rect=[" + cl[0] + "," + cl[1] + ","
+                        + (cl[0] + targetParent.getWidth()) + "," + (cl[1] + targetParent.getHeight()) + "]"
+                        + " w=" + targetParent.getWidth() + " class=" + targetParent.getClass().getSimpleName());
+            }
+        } catch (Throwable t) {
+            log("dumpFourKeyRects err: " + t);
+        }
+    }
+
+    /** 从 mViews（List 或数组）中按方向取：竖屏取第一个 width>height 的或 [0]；横屏取最后一个高>宽的或 [1]。 */
+    private static View pickDirectionalView(Object viewsObj, boolean landscape) {
+        java.util.List<View> list = new java.util.ArrayList<>();
+        try {
+            if (viewsObj instanceof java.util.List) {
+                for (Object o : (java.util.List<?>) viewsObj) if (o instanceof View) list.add((View) o);
+            } else if (viewsObj != null && viewsObj.getClass().isArray()) {
+                int n = java.lang.reflect.Array.getLength(viewsObj);
+                for (int i = 0; i < n; i++) {
+                    Object o = java.lang.reflect.Array.get(viewsObj, i);
+                    if (o instanceof View) list.add((View) o);
+                }
+            }
+        } catch (Throwable ignored) { }
+        if (list.isEmpty()) return null;
+        for (View v : list) {
+            boolean vert = v.getHeight() > v.getWidth();
+            if (landscape == vert) return v;
+        }
+        return list.get(0);
+    }
+
+    /** 计算 rects[ai] 与 rects[bi] 的交集矩形；无交集返回 null。 */
+    private static int[] intersect(int[] rects, int ai, int bi) {
+        int l = Math.max(rects[ai * 4], rects[bi * 4]);
+        int t = Math.max(rects[ai * 4 + 1], rects[bi * 4 + 1]);
+        int r = Math.min(rects[ai * 4 + 2], rects[bi * 4 + 2]);
+        int b = Math.min(rects[ai * 4 + 3], rects[bi * 4 + 3]);
+        if (r <= l || b <= t) return null;
+        return new int[]{l, t, r, b};
     }
 
     /**
