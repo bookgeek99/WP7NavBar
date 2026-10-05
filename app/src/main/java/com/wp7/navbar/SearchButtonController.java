@@ -30,6 +30,7 @@ public final class SearchButtonController {
     // 从 back/home 读取的颜色 / 阴影，让搜索键与它们对齐（首次读取后缓存）
     static int refLightColor = 0;
     static int refDarkColor = 0;
+    static float refDarkIntensity = 0f;   // [2C-7] back/home 当前的暗度（0=light,1=dark）
     static boolean refColorLoaded = false;
     static int refShadowOffsetX = 0, refShadowOffsetY = 0, refShadowSize = 0, refShadowColor = 0;
 
@@ -52,11 +53,12 @@ public final class SearchButtonController {
             Object result = param.getResult();
             if (!(result instanceof String)) return;
             String orig = (String) result;
-            // 关键（方案第二节）：横屏完全不碰——左段输入法键、右段 Search 全部不注入，Recent 完全原生。
-            // 用全局方向状态而非 inflater 的 Context Configuration（后者在旋转时更新滞后）。
+            // [2C-8] 横屏也注入 ime_switcher（输入法切换键），与竖屏一致；
+            //         Search 仍只在竖屏注入（横屏布局单独处理）。
+            //   用全局方向状态而非 inflater 的 Context Configuration（后者在旋转时更新滞后）。
             boolean landscape = NavigationBarController.sCurrentOrientation
                     == NavigationBarController.NavBarOrientation.LANDSCAPE;
-            String injected = injectLayouts(orig, imeEnabled && !landscape, searchBtn && !landscape);
+            String injected = injectLayouts(orig, imeEnabled, searchBtn && !landscape);
             if (!injected.equals(orig)) {
                 param.setResult(injected);
             }
@@ -234,8 +236,31 @@ public final class SearchButtonController {
 
             java.lang.reflect.Constructor<?> kbdCtor = kbdCls.getDeclaredConstructor(Drawable.class, sdsCls);
             kbdCtor.setAccessible(true);
-            Drawable icon = new Wp7IconDrawable(size, lightColor, "SEARCH");
-            return (Drawable) kbdCtor.newInstance(icon, state);
+            // [2C-7] 用与 back/home 相同的方式计算实际显示色：
+            //   实际色 = ArgbEvaluator.evaluate(darkIntensity, mLightColor, mDarkColor)
+            //   （KeyButtonDrawable 内部就是这样算的；此前我们只用 mLightColor → 颜色不一致）
+            int actualColor = lightColor;
+            try {
+                Object ev = new android.animation.ArgbEvaluator();
+                java.lang.reflect.Method evm = android.animation.ArgbEvaluator.class
+                        .getMethod("evaluate", float.class, Object.class, Object.class);
+                Object c = evm.invoke(ev, refDarkIntensity, lightColor, darkColor);
+                if (c instanceof Integer) actualColor = (Integer) c;
+            } catch (Throwable ignored) { }
+            Drawable icon = new Wp7IconDrawable(size, actualColor, "SEARCH");
+            Drawable kbd = (Drawable) kbdCtor.newInstance(icon, state);
+            XposedBridge.log(TAG + ": [2C-7] color actual=0x" + Integer.toHexString(actualColor)
+                    + " light=0x" + Integer.toHexString(lightColor)
+                    + " dark=0x" + Integer.toHexString(darkColor)
+                    + " darkIntensity=" + refDarkIntensity
+                    + " loaded=" + refColorLoaded);
+            // 把 darkIntensity 也设给我们的 KeyButtonDrawable（让它的 SRC_ATOP filter / 阴影一致）
+            try {
+                java.lang.reflect.Method sdi = kbdCls.getMethod("setDarkIntensity", float.class);
+                sdi.setAccessible(true);
+                sdi.invoke(kbd, refDarkIntensity);
+            } catch (Throwable ignored) { }
+            return kbd;
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": createSearchKeyButtonDrawable err: " + t);
             return null;
@@ -247,6 +272,14 @@ public final class SearchButtonController {
         if (refColorLoaded) return;
         if (!(root instanceof android.view.ViewGroup)) return;
         collectRefColorRecursive((android.view.ViewGroup) root);
+        // [2C-7] 取色成功后，重新刷新 Search 图标颜色（此前图标可能已用默认色创建）
+        if (refColorLoaded) {
+            try {
+                SearchContextualButtonFactory.refreshSearchIconColor(root);
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": [2C-7] refreshSearchIconColor err: " + t);
+            }
+        }
     }
 
     private static void collectRefColorRecursive(android.view.ViewGroup vg) {
@@ -265,6 +298,9 @@ public final class SearchButtonController {
                             if (lc instanceof Integer && dc instanceof Integer) {
                                 refLightColor = (Integer) lc;
                                 refDarkColor = (Integer) dc;
+                                // [2C-7] 读取 back/home 当前的 darkIntensity（决定 light/dark 之间的插值）
+                                Object di = SystemUiReflection.getFieldQuiet(st, "mDarkIntensity");
+                                if (di instanceof Float) refDarkIntensity = (Float) di;
                                 Object sox = SystemUiReflection.getFieldQuiet(st, "mShadowOffsetX");
                                 Object soy = SystemUiReflection.getFieldQuiet(st, "mShadowOffsetY");
                                 Object ssz = SystemUiReflection.getFieldQuiet(st, "mShadowSize");

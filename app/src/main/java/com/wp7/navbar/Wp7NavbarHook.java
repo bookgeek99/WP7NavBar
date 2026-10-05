@@ -120,11 +120,8 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
      * 其余（左段输入法键）按 IME 状态设 VISIBLE/GONE。
      */
     private void updateLeftImeSwitcherVisibility(View navBarView, boolean imeVisible) {
-        // 横屏完全不碰 ime_switcher（保持系统原生），仅在竖屏调整左段输入法键可见性。
-        if (NavigationBarController.sCurrentOrientation
-                == NavigationBarController.NavBarOrientation.LANDSCAPE) {
-            return;
-        }
+        // [2C-8] 横屏也由我们控制 ime_switcher 可见性（此前横屏交给系统原生，但系统在横屏 IME 弹出时不显示该键）。
+        //   现在横竖屏统一：IME 可见 → VISIBLE，否则 GONE。
         updateLeftImeSwitcherRecursive(navBarView, imeVisible);
     }
 
@@ -212,19 +209,13 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                     try {
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                             String layoutStr = (String) param.args[0];
-                            // 横屏时移除传入布局串里的 ime_switcher（可能来自竖屏串缓存），
-                            // 还原为系统原生串，避免横屏出现多余输入法键。
+                            // [2C-8] 横屏不再移除 ime_switcher —— 现在横屏也要显示输入法切换键。
+                            //   仅保留探测日志（不再改写布局串）。
                             if (NavigationBarController.sCurrentOrientation
                                     == NavigationBarController.NavBarOrientation.LANDSCAPE) {
-                                String cleaned = removeImeSwitchers(layoutStr);
-                                // [2A 探测] 记录横屏 BEFORE / BEFORE_CLEAN / 结构分析
                                 try {
-                                    LandscapeProbe.logInflateBefore(layoutStr, cleaned);
-                                    LandscapeProbe.analyzeLayoutString(cleaned);
+                                    LandscapeProbe.logInflateBefore(layoutStr, layoutStr);
                                 } catch (Throwable ignored) { }
-                                if (!cleaned.equals(layoutStr)) {
-                                    param.args[0] = cleaned;
-                                }
                             }
                         }
                     } catch (Throwable ignored) { }
@@ -376,26 +367,6 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 从布局串（形如 "a[x],b;c;d[x],e"）中移除所有 ime_switcher token（连同 weight）。 */
-    private static String removeImeSwitchers(String layout) {
-        if (layout == null || !layout.contains("ime_switcher")) return layout;
-        String[] parts = layout.split(";", -1);
-        for (int i = 0; i < parts.length; i++) {
-            String[] items = parts[i].split(",", -1);
-            StringBuilder sb = new StringBuilder();
-            for (String it : items) {
-                String name = it.trim();
-                int br = name.indexOf('[');
-                if (br >= 0) name = name.substring(0, br).trim();
-                if (name.equals("ime_switcher")) continue;
-                if (sb.length() > 0) sb.append(",");
-                sb.append(it);
-            }
-            parts[i] = sb.toString();
-        }
-        return String.join(";", parts);
-    }
-
     /** [2C-6b] 清除 navigation_layout 根 FrameLayout 的圆角留白 margin。 */
     private static void stripNavBarMargins(Object inflaterView) {
         for (String field : new String[]{"mHorizontal", "mVertical"}) {
@@ -407,12 +378,13 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 android.view.ViewGroup.LayoutParams lp = root.getLayoutParams();
                 if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
                     android.view.ViewGroup.MarginLayoutParams mlp = (android.view.ViewGroup.MarginLayoutParams) lp;
-                    int oldL = mlp.leftMargin, oldR = mlp.rightMargin;
-                    mlp.leftMargin = 0; mlp.rightMargin = 0;
+                    int oldL = mlp.leftMargin, oldT = mlp.topMargin, oldR = mlp.rightMargin, oldB = mlp.bottomMargin;
+                    // 竖屏留白在 L/R，横屏留白在 T/B —— 全部清零
+                    mlp.setMargins(0, 0, 0, 0);
                     mlp.setMarginStart(0); mlp.setMarginEnd(0);
                     root.setLayoutParams(mlp);
                     XposedBridge.log(TAG + ": [2C-6b] strip " + field
-                            + " margin L/R: " + oldL + "/" + oldR + " -> 0/0"
+                            + " margins L/T/R/B: " + oldL + "/" + oldT + "/" + oldR + "/" + oldB + " -> 0"
                             + " class=" + root.getClass().getSimpleName());
                 } else {
                     XposedBridge.log(TAG + ": [2C-6b] " + field + " lp not MarginLP: "

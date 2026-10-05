@@ -245,7 +245,7 @@ public final class SearchContextualButtonFactory {
                     + " parentId=0x" + Integer.toHexString(targetParent.getId())
                     + " addToDispatchers=" + bound);
             dumpSearchDispatcher(inflaterView);
-            // [2C-5 实验] 布局完成后（post 到 UI 队列末尾）打印四键坐标 + 计算 home∩search 交集。
+            // 布局完成后（post 到 UI 队列末尾）打印四键坐标 + 计算按键交集。
             if (targetParent != null) {
                 final ViewGroup fp = targetParent;
                 final Object fiv = inflaterView;
@@ -490,6 +490,39 @@ public final class SearchContextualButtonFactory {
             log("applyWp7Icon err: " + t);
         }
     }
+
+    /** [2C-7] 取色后刷新 Search 图标颜色（从 navBarView 找到 inflaterView 再重设图标）。 */
+    public static void refreshSearchIconColor(View navBarView) {
+        try {
+            if (navBarView == null) return;
+            View inflaterView = findInflaterView(navBarView);
+            if (inflaterView == null) {
+                log("[2C-7] refreshSearchIconColor: inflaterView not found");
+                return;
+            }
+            log("[2C-7] refreshSearchIconColor: re-applying icon with loaded color");
+            applyWp7IconAfterBind(inflaterView);
+        } catch (Throwable t) {
+            log("[2C-7] refreshSearchIconColor err: " + t);
+        }
+    }
+
+    /** 递归查找 NavigationBarInflaterView。 */
+    private static View findInflaterView(View root) {
+        try {
+            if (root == null) return null;
+            if (root.getClass().getName().contains("NavigationBarInflaterView")) return root;
+            if (root instanceof ViewGroup) {
+                ViewGroup vg = (ViewGroup) root;
+                for (int i = 0; i < vg.getChildCount(); i++) {
+                    View r = findInflaterView(vg.getChildAt(i));
+                    if (r != null) return r;
+                }
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
     // ==================================================================
     // 2C-3：给 Search dispatcher 绑定 click / long click
     // ==================================================================
@@ -535,24 +568,8 @@ public final class SearchContextualButtonFactory {
         dumpSearchDispatcher(inflaterView);
     }
 
-    /** [2C-5] 从 root View 递归找指定 id 的 ViewGroup。 */
-    private static ViewGroup findViewGroupById(View root, int id) {
-        try {
-            if (root == null) return null;
-            if (root.getId() == id && root instanceof ViewGroup) return (ViewGroup) root;
-            if (root instanceof ViewGroup) {
-                ViewGroup vg = (ViewGroup) root;
-                for (int i = 0; i < vg.getChildCount(); i++) {
-                    ViewGroup r = findViewGroupById(vg.getChildAt(i), id);
-                    if (r != null) return r;
-                }
-            }
-        } catch (Throwable ignored) { }
-        return null;
-    }
-
     /**
-     * [2C-5 实验] 打印 back/home/search/recent 的屏幕矩形 + 计算 home∩search 交集。
+     * 打印 back/home/search/recent 的屏幕矩形 + 计算按键交集。
      * 全部通过 dispatcher.mViews 取【当前方向】的那个 View（landscape 取 [1]，竖屏取 [0]）。
      * 只读，不改状态。
      */
@@ -574,20 +591,20 @@ public final class SearchContextualButtonFactory {
 
             for (int k = 0; k < ids.length; k++) {
                 Object d = dispatchers.get(ids[k]);
-                if (d == null) { log("2C5 rect[" + names[k] + "]: dispatcher null"); continue; }
+                if (d == null) { log("KEYRECT[" + names[k] + "]: dispatcher null"); continue; }
                 Object viewsObj = SystemUiReflection.getFieldQuiet(d, "mViews");
                 String vs = viewsObj == null ? "null" : viewsObj.getClass().getName();
-                log("2C5 rect[" + names[k] + "]: id=0x" + Integer.toHexString(ids[k])
+                log("KEYRECT[" + names[k] + "]: id=0x" + Integer.toHexString(ids[k])
                         + " dispatcher=" + d.getClass().getSimpleName() + " mViews=" + vs);
                 // 取当前方向的 View
                 View v = pickDirectionalView(viewsObj, landscape);
-                if (v == null) { log("2C5   " + names[k] + ": no directional view"); continue; }
+                if (v == null) { log("KEYRECT " + names[k] + ": no directional view"); continue; }
                 int[] loc = new int[2];
                 v.getLocationOnScreen(loc);
                 int w = v.getWidth(), h = v.getHeight();
                 rects[k * 4] = loc[0]; rects[k * 4 + 1] = loc[1];
                 rects[k * 4 + 2] = loc[0] + w; rects[k * 4 + 3] = loc[1] + h;
-                log("2C5   " + names[k] + ": class=" + v.getClass().getSimpleName()
+                log("KEYRECT " + names[k] + ": class=" + v.getClass().getSimpleName()
                         + " vis=" + v.getVisibility()
                         + " rect=[" + loc[0] + "," + loc[1] + "," + (loc[0] + w) + "," + (loc[1] + h) + "]"
                         + " w=" + w + " h=" + h);
@@ -595,22 +612,22 @@ public final class SearchContextualButtonFactory {
 
             // home(1) ∩ search(2)
             int[] inter = intersect(rects, 1, 2);
-            log("2C5 INTERSECT home∩search = "
+            log("KEYRECT INTERSECT home/search = "
                     + (inter == null ? "NONE(0)" : "[" + inter[0] + "," + inter[1] + "," + inter[2] + "," + inter[3]
                     + "] area=" + Math.max(0, inter[2] - inter[0]) * Math.max(0, inter[3] - inter[1])));
             // search(2) ∩ recent(3)
             int[] ir2 = intersect(rects, 2, 3);
-            log("2C5 INTERSECT search∩recent = "
+            log("KEYRECT INTERSECT search/recent = "
                     + (ir2 == null ? "NONE(0)" : "[" + ir2[0] + "," + ir2[1] + "," + ir2[2] + "," + ir2[3] + "]"));
             // back(0) ∩ home(1)
             int[] ibh = intersect(rects, 0, 1);
-            log("2C5 INTERSECT back∩home = "
+            log("KEYRECT INTERSECT back/home = "
                     + (ibh == null ? "NONE(0)" : "[" + ibh[0] + "," + ibh[1] + "," + ibh[2] + "," + ibh[3] + "]"));
-            // center_group 自身坐标
+            // targetParent 自身坐标
             if (targetParent != null) {
                 int[] cl = new int[2];
                 targetParent.getLocationOnScreen(cl);
-                log("2C5 center_group rect=[" + cl[0] + "," + cl[1] + ","
+                log("KEYRECT parent rect=[" + cl[0] + "," + cl[1] + ","
                         + (cl[0] + targetParent.getWidth()) + "," + (cl[1] + targetParent.getHeight()) + "]"
                         + " w=" + targetParent.getWidth() + " class=" + targetParent.getClass().getSimpleName());
             }

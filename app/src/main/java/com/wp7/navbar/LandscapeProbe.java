@@ -269,38 +269,6 @@ public final class LandscapeProbe {
     }
 
     // ==================================================================
-    // 十一：layout 字符串结构解析（只分析，不修改）
-    // ==================================================================
-
-    /**
-     * 解析布局串结构：按 ';' 分段，每段按 ',' 分 token，token 形如 "back[1WC]"。
-     * 输出 LANDSCAPE_LAYOUT_ANALYSIS。
-     */
-    public static void analyzeLayoutString(String layout) {
-        if (!ENABLED || layout == null) return;
-        log("========== LANDSCAPE_LAYOUT_ANALYSIS ==========");
-        log("raw = " + layout);
-        String[] segments = layout.split(";", -1);
-        for (int i = 0; i < segments.length; i++) {
-            log("segment[" + i + "] = " + segments[i]);
-            String[] tokens = segments[i].split(",", -1);
-            for (String tok : tokens) {
-                if (tok.isEmpty()) continue;
-                String name = tok;
-                String modifier = "";
-                int b = tok.indexOf('[');
-                if (b >= 0) {
-                    name = tok.substring(0, b);
-                    int e = tok.indexOf(']', b);
-                    modifier = e > b ? tok.substring(b + 1, e) : "";
-                }
-                log("    token name=" + name + " modifier=[" + modifier + "]");
-            }
-        }
-        log("========== END LANDSCAPE_LAYOUT_ANALYSIS ==========");
-    }
-
-    // ==================================================================
     // 工具
     // ==================================================================
 
