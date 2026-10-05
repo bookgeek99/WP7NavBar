@@ -1,32 +1,53 @@
 plugins {
     id 'com.android.application'
 }
-
 android {
     namespace 'com.wp7.navbar'
     compileSdk 36
     buildToolsVersion '36.0.0'
-
     defaultConfig {
         applicationId "com.wp7.navbar"
         minSdk 26
         targetSdk 36
-        versionCode 1
-        versionName "1.0"
+        versionCode 20000
+        versionName "2.0"
+    }
+
+    // 发布签名：keystore 入库（个人模块），密码优先取环境变量，缺省用内置值，便于本地与 CI 共用同一配置。
+    signingConfigs {
+        release {
+            storeFile file('../keystore/wp7-release.jks')
+            storePassword System.getenv("WP7_KEYSTORE_PASSWORD") ?: "wp7navbar"
+            keyAlias System.getenv("WP7_KEY_ALIAS") ?: "wp7"
+            keyPassword System.getenv("WP7_KEY_PASSWORD") ?: "wp7navbar"
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
+            shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+        debug {
+            // 调试包与发布包同签名，避免覆盖安装时的签名冲突
+            signingConfig signingConfigs.release
         }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    // 自定义产物文件名：WP7NavBar-<versionName>.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            if (variant.buildType.name == 'release') {
+                outputFileName = "WP7NavBar-${variant.versionName}.apk"
+            }
+        }
+    }
 }
-
 dependencies {
     // LSPosed API (compileOnly: 不在APK内打包，由框架提供)
     compileOnly 'de.robv.android.xposed:api:82'
