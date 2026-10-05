@@ -243,6 +243,8 @@ public final class SearchContextualButtonFactory {
                     + " parentId=0x" + Integer.toHexString(parent.getId())
                     + " addToDispatchers=" + bound);
             dumpSearchDispatcher(inflaterView);
+            // [2C-4 前置分析] 只读：dump 整个段容器所有子 View 的完整 LayoutParams
+            dumpSegmentLayout(parent, landscape);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": inflateSearchButton err: " + t);
         }
@@ -514,6 +516,66 @@ public final class SearchContextualButtonFactory {
     /** putInto 完成后（setButtonDispatchers after）dump Search dispatcher 状态。 */
     public static void dumpAfterBind(Object inflaterView) {
         dumpSearchDispatcher(inflaterView);
+    }
+
+    /**
+     * [2C-4 前置分析，只读] dump 段容器（ends_group 的 LinearLayout）内所有子 View 的完整
+     * LayoutParams / padding / rect，用于对比 Back / Search / Recent / Space 的布局机制。
+     * 不修改任何状态。
+     */
+    private static void dumpSegmentLayout(ViewGroup seg, boolean landscape) {
+        try {
+            log("SEGMENT-DUMP landscape=" + landscape
+                    + " class=" + seg.getClass().getName()
+                    + " id=0x" + Integer.toHexString(seg.getId())
+                    + " childCount=" + seg.getChildCount()
+                    + " segLp=" + lpToString(seg.getLayoutParams()));
+            for (int i = 0; i < seg.getChildCount(); i++) {
+                View c = seg.getChildAt(i);
+                int[] loc = new int[2];
+                c.getLocationOnScreen(loc);
+                String info = "  [" + i + "] " + c.getClass().getSimpleName()
+                        + " id=0x" + Integer.toHexString(c.getId())
+                        + " vis=" + c.getVisibility()
+                        + " lp=" + lpToString(c.getLayoutParams())
+                        + " padStart=" + c.getPaddingStart()
+                        + " padEnd=" + c.getPaddingEnd()
+                        + " rect=[" + loc[0] + "," + loc[1] + ","
+                        + (loc[0] + c.getWidth()) + "," + (loc[1] + c.getHeight()) + "]";
+                log(info);
+                // 若是 ViewGroup（如 wrapper），再打印其子 View
+                if (c instanceof ViewGroup) {
+                    ViewGroup vg = (ViewGroup) c;
+                    for (int j = 0; j < vg.getChildCount(); j++) {
+                        View cc = vg.getChildAt(j);
+                        int[] cl = new int[2];
+                        cc.getLocationOnScreen(cl);
+                        log("      * " + cc.getClass().getSimpleName()
+                                + " id=0x" + Integer.toHexString(cc.getId())
+                                + " vis=" + cc.getVisibility()
+                                + " lp=" + lpToString(cc.getLayoutParams())
+                                + " rect=[" + cl[0] + "," + cl[1] + ","
+                                + (cl[0] + cc.getWidth()) + "," + (cl[1] + cc.getHeight()) + "]");
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            log("dumpSegmentLayout err: " + t);
+        }
+    }
+
+    /** LayoutParams 字符串化（含 LinearLayout weight）。 */
+    private static String lpToString(android.view.ViewGroup.LayoutParams lp) {
+        if (lp == null) return "null";
+        String base = lp.getClass().getSimpleName() + "{w=" + lp.width + ",h=" + lp.height;
+        if (lp instanceof android.widget.LinearLayout.LayoutParams) {
+            base += ",weight=" + ((android.widget.LinearLayout.LayoutParams) lp).weight;
+        }
+        if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
+            android.view.ViewGroup.MarginLayoutParams m = (android.view.ViewGroup.MarginLayoutParams) lp;
+            base += ",marginL=" + m.leftMargin + ",marginR=" + m.rightMargin;
+        }
+        return base + "}";
     }
 
     /** 打印 Search dispatcher 的 mViews 情况。 */
