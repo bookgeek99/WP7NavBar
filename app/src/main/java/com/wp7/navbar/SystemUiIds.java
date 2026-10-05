@@ -23,5 +23,18 @@ public final class SystemUiIds {
     // 顶层导航栏容器（其子段按 index 包含各键）
     public static final int ID_NAV_CONTAINER = 0x7f0b0443;
 
+    // 横屏容器
+    public static final int ID_NAV_VERTICAL = 0x7f0b0d43;
+    // center_group（home 所在段容器）
+    public static final int ID_NAV_CENTER_GROUP = 0x7f0b0270;
+
+    // [2C] WP7 独立 Search ContextualButton 的自定义资源 id。
+    // 不能与 SystemUI 资源冲突：SystemUI 的资源 id 落在 0x7f0b0000~0x7f0bffff 区间，
+    // 这里选用 0x7f1f0001 作为模块私有 id（不会与 SystemUI 的 public.xml 冲突）。
+    public static final int WP7_SEARCH_ID = 0x7f1f0001;
+
+    // custom_key layout（KeyButtonView 模板，无 id）
+    public static final int LAYOUT_CUSTOM_KEY = 0x7f0e00ab;
+
     private SystemUiIds() {}
 }

@@ -2,7 +2,7 @@ package com.wp7.navbar;
 
 import android.view.View;
 import android.widget.ImageView;
-
+import android.util.SparseArray;
 import java.util.Map;
 import java.util.WeakHashMap;
 
@@ -50,7 +50,7 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
         hookGetDefaultLayout(lpparam);
         hookNavigationBarViewLifecycle(lpparam);
         hookImeWindowStatus(lpparam);
-
+        hookSearchContextualButton(lpparam);
         XposedBridge.log(TAG + ": all hooks setup done");
     }
 
@@ -270,6 +270,93 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": hooked getDefaultLayout + inflateLayout");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hookGetDefaultLayout err: " + t);
+        }
+    }
+
+    // =====================================================================
+    // Hook 6 [2C-1]: NavigationBarInflaterView.onFinishInflate / inflateButtons
+    //   —— 注册独立 Search ContextualButton + 识别 wp7search token
+    // =====================================================================
+    private void hookSearchContextualButton(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> inflaterCls = SystemUiReflection.findClass(
+                    "com.android.systemui.navigationbar.views.NavigationBarInflaterView", lpparam.classLoader);
+            if (inflaterCls == null) return;
+
+            // onFinishInflate after：此时 mButtonDispatchers 已就绪、尚未 inflateLayout
+            // → 注册 Search ContextualButton
+            XposedBridge.hookAllMethods(inflaterCls, "onFinishInflate", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        SearchContextualButtonFactory.ensureRegistered(param.thisObject);
+                    } catch (Throwable ignored) { }
+                }
+            });
+
+            // setButtonDispatchers before：把 Search ContextualButton put 进系统传入的
+            // SparseArray 参数，这样 setButtonDispatchers 内部的 addAll 会自动扫描到
+            // 已存在的 wp7search View 并完成绑定（不复制系统绑定逻辑）。
+            XposedBridge.hookAllMethods(inflaterCls, "setButtonDispatchers", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.args != null && param.args.length > 0
+                                && param.args[0] instanceof SparseArray) {
+                            SearchContextualButtonFactory.putInto(param.args[0], param.thisObject);
+                        }
+                    } catch (Throwable ignored) { }
+                }
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    // setButtonDispatchers 内部已对传入 SparseArray 每个 dispatcher 做 addAll，
+                    // 此时我们的 Search dispatcher 应已收到 horizontal + vertical 两个 View。
+                    try {
+                        SearchContextualButtonFactory.dumpAfterBind(param.thisObject);
+                    } catch (Throwable ignored) { }
+                }
+            });
+
+            // inflateButtons before：若 tokens 含 wp7search，先手动创建 Search View，
+            // 再把该 token 从数组里移除（系统不认识它会跳过，我们自行处理）。
+            XposedBridge.hookAllMethods(inflaterCls, "inflateButtons", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.args == null || param.args.length < 3) return;
+                        if (!(param.args[0] instanceof String[])) return;
+                        if (!(param.args[1] instanceof android.view.ViewGroup)) return;
+                        String[] tokens = (String[]) param.args[0];
+                        android.view.ViewGroup parent = (android.view.ViewGroup) param.args[1];
+                        boolean landscape = (param.args[2] instanceof Boolean) && (Boolean) param.args[2];
+
+                        boolean hasSearch = false;
+                        for (String tk : tokens) {
+                            if (SearchContextualButtonFactory.isSearchToken(tk)) { hasSearch = true; break; }
+                        }
+                        if (!hasSearch) return;
+
+                        // 逐个处理 wp7search token（通常在段内只出现一次）
+                        java.util.List<String> rest = new java.util.ArrayList<>();
+                        for (String tk : tokens) {
+                            if (SearchContextualButtonFactory.isSearchToken(tk)) {
+                                SearchContextualButtonFactory.inflateSearchButton(
+                                        param.thisObject, tk, parent, landscape);
+                            } else {
+                                rest.add(tk);
+                            }
+                        }
+                        // 用去掉 wp7search 后的数组替换，避免系统再处理（它会跳过）
+                        String[] newTokens = rest.toArray(new String[0]);
+                        param.args[0] = newTokens;
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": inflateButtons before search err: " + t);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": hooked search contextual button (2C-1)");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hookSearchContextualButton err: " + t);
         }
     }
 

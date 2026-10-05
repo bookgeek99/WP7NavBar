@@ -142,8 +142,16 @@ public final class SearchButtonController {
             // 搜索键关闭：右段保持系统默认布局不动
         }
 
-        return String.join(";", parts);
+        // ---- [2C-1] 注入独立 wp7search token（在右段最前，验证独立 ContextualButton 链路）----
+        if (WP7_2C1_ENABLED && !parts[2].contains("wp7search")) {
+            parts[2] = "wp7search[1W]," + parts[2];
+        }
+
+return String.join(";", parts);
     }
+
+    /** [2C-1] 是否注入独立 wp7search token（验证阶段开关，便于回退）。 */
+    static final boolean WP7_2C1_ENABLED = true;
 
     /** 判断段字符串里是否包含 recent token。 */
     static boolean containsRecents(String seg) {
