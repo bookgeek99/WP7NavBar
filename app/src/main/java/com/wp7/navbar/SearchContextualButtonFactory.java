@@ -197,24 +197,11 @@ public final class SearchContextualButtonFactory {
                 log("inflateSearchButton: LayoutInflater null, skip");
                 return;
             }
-            // [2C-5 实验] 把 Search 放进 center_group（与 home 同组），而不是 ends_group。
-            //   原因：ends_group(match_parent, z下) 与 center_group(wrap+center, z上) 是叠层，
-            //   放 ends_group 中间必然与 home 重叠（见 2C4_LAYOUT_OVERLAP_REPORT.md）。
-            //   本实验只做竖屏；横屏暂不改架构（保持原 parent）。
+            // [2C-6] 回退 2C-5 的 center_group 实验：Search 放回 ends_group。
+            //   用户确定的目标对称布局（ends_group 内）：
+            //     ime_switcher(.5W) | back(1W) | Space(1W) | search(1W) | recent(.5W)
+            //   左半 1.5 : 右半 1.5 对称；中间 Space 留白给 center_group 的 home。
             ViewGroup targetParent = parent;
-            if (!landscape) {
-                ViewGroup cg = (inflaterView instanceof View)
-                        ? findViewGroupById((View) inflaterView, SystemUiIds.ID_NAV_CENTER_GROUP)
-                        : null;
-                if (cg != null) {
-                    targetParent = cg;
-                    log("2C5: target parent switched to center_group id=0x"
-                            + Integer.toHexString(SystemUiIds.ID_NAV_CENTER_GROUP)
-                            + " class=" + cg.getClass().getName());
-                } else {
-                    log("2C5: center_group not found, keep original parent");
-                }
-            }
             // inflate custom_key（KeyButtonView 模板，无 id）
             View btn = li.inflate(SystemUiIds.LAYOUT_CUSTOM_KEY, targetParent, false);
             if (btn == null) {

@@ -231,6 +231,15 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 }
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
+                    // [2C-6b] 清除导航栏根 FrameLayout(mHorizontal/mVertical) 的
+                    //   rounded_corner_content_padding margin，让 ime/recent 更贴屏幕边缘。
+                    try {
+                        if (param.thisObject != null) {
+                            stripNavBarMargins(param.thisObject);
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": stripNavBarMargins err: " + t);
+                    }
                     // 布局刚 inflate 完，此时 recent / ime_switcher 都已创建且结构稳定，
                     // 是标记右段搜索键的最佳时机（onAttachedToWindow 时 recent 可能尚未 inflate）
                     try {
@@ -385,6 +394,34 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
             parts[i] = sb.toString();
         }
         return String.join(";", parts);
+    }
+
+    /** [2C-6b] 清除 navigation_layout 根 FrameLayout 的圆角留白 margin。 */
+    private static void stripNavBarMargins(Object inflaterView) {
+        for (String field : new String[]{"mHorizontal", "mVertical"}) {
+            Object v = SystemUiReflection.getFieldQuiet(inflaterView, field);
+            if (!(v instanceof View)) continue;
+            View root = (View) v;
+            try { if (root instanceof android.view.ViewGroup) ((android.view.ViewGroup) root).setPadding(0, 0, 0, 0); } catch (Throwable ignored) { }
+            try {
+                android.view.ViewGroup.LayoutParams lp = root.getLayoutParams();
+                if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
+                    android.view.ViewGroup.MarginLayoutParams mlp = (android.view.ViewGroup.MarginLayoutParams) lp;
+                    int oldL = mlp.leftMargin, oldR = mlp.rightMargin;
+                    mlp.leftMargin = 0; mlp.rightMargin = 0;
+                    mlp.setMarginStart(0); mlp.setMarginEnd(0);
+                    root.setLayoutParams(mlp);
+                    XposedBridge.log(TAG + ": [2C-6b] strip " + field
+                            + " margin L/R: " + oldL + "/" + oldR + " -> 0/0"
+                            + " class=" + root.getClass().getSimpleName());
+                } else {
+                    XposedBridge.log(TAG + ": [2C-6b] " + field + " lp not MarginLP: "
+                            + (lp == null ? "null" : lp.getClass().getSimpleName()));
+                }
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": [2C-6b] " + field + " strip err: " + t);
+            }
+        }
     }
 
     /** [2A 探测] 从 inflaterView 向上找 NavigationBarView（按类名匹配）。 */

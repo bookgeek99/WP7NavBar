@@ -110,7 +110,12 @@ public final class SearchButtonController {
             String right = parts[2];
             right = right.replaceAll("(^|,)\\s*right(\\[[^\\]]*])?(?=,|$)", "");
             right = right.replaceAll(",,", ",").replaceAll("^,", "").replaceAll(",$", "");
-            if (right.trim().isEmpty()) right = "recent[1WC]";
+            if (right.trim().isEmpty()) right = "recent[.5WC]";
+            // [2C-6] recent 改为 .5W，与左侧 ime_switcher[.5W] 左右对称角键：
+            //   左半 = ime(.5) + back(1) = 1.5
+            //   中   = Space(1)          = home 的叠加位
+            //   右半 = search(1) + recent(.5) = 1.5   ← 对称
+            right = right.replaceAll("recent\\[\\s*1\\s*W", "recent[.5W");
             parts[2] = "wp7search[1W]," + right;
         }
         return String.join(";", parts);
