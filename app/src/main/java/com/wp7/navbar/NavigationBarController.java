@@ -72,6 +72,41 @@ public final class NavigationBarController {
         XposedBridge.log(TAG + ": orientation changed " + orientation + " -> " + newOrientation);
         this.orientation = newOrientation;
         applyCurrent();
+        // [2A 探测] 横屏：layout 完成后再 dump 真实 View 树 / dispatcher
+        if (newOrientation == NavBarOrientation.LANDSCAPE) {
+            final View navBarView = navBarViewRef.get();
+            if (navBarView != null) {
+                navBarView.postDelayed(new Runnable() {
+                    @Override public void run() {
+                        try {
+                            LandscapeProbe.dumpLandscapeTree(navBarView);
+                            LandscapeProbe.dumpDispatchers(navBarView);
+                            // 找 NavigationBarInflaterView 子节点 dump 其内部字段
+                            View inflater = findChildByClassName(navBarView,
+                                    "com.android.systemui.navigationbar.views.NavigationBarInflaterView");
+                            if (inflater != null) {
+                                LandscapeProbe.dumpInflaterFields(inflater);
+                            }
+                        } catch (Throwable ignored) { }
+                    }
+                }, 300);
+            }
+        }
+    }
+
+    /** 找指定类名的直接/间接子 View。 */
+    private static View findChildByClassName(View root, String className) {
+        try {
+            if (root.getClass().getName().equals(className)) return root;
+            if (root instanceof android.view.ViewGroup) {
+                android.view.ViewGroup vg = (android.view.ViewGroup) root;
+                for (int i = 0; i < vg.getChildCount(); i++) {
+                    View r = findChildByClassName(vg.getChildAt(i), className);
+                    if (r != null) return r;
+                }
+            }
+        } catch (Throwable ignored) { }
+        return null;
     }
 
     /** 应用当前方向的 controller。 */

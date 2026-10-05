@@ -7,7 +7,7 @@
 | 方向 | 布局 | 说明 |
 |------|------|------|
 | **竖屏** | Back + Home + **Search** | Search 由 ime_switcher 伪装；Recent 移到最右 |
-| **横屏** | Back + Home + **Recent** | **Recent 完全由 SystemUI 原生管理**，模块不注入 Search、不碰 Recent / ime_switcher |
+| **横屏** | Back + Home + **Recent** | 横屏不注入 Search、不修改 Recent；仅对 HyperOS 布局缓存遗留的 ime_switcher 做清理/隐藏。Back/Home 仅替换 Drawable |
 
 > 第一阶段目标（方案）：横屏彻底放手，优先修复"横屏多任务键失灵"。横屏 Search 留待第二阶段研究系统原生 ButtonDispatcher 机制后实现（Back+Home+Search+Recent 四个独立键）。
 ## 功能效果

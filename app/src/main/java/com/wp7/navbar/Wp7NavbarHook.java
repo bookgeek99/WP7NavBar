@@ -202,6 +202,12 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
             XposedBridge.hookAllMethods(inflaterCls, "getDefaultLayout", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
+                    // [2A 探测] 先记录 getDefaultLayout 原始返回串（在任何注入之前）
+                    try {
+                        LandscapeProbe.logGetDefaultLayout(
+                                NavigationBarController.sCurrentOrientation.name(),
+                                param.getResult());
+                    } catch (Throwable ignored) { }
                     // 竖屏注入右段 ime_switcher(搜索)+recent；横屏由 SearchButtonController 内部判定跳过
                     SearchButtonController.onGetDefaultLayout(param);
                 }
@@ -219,6 +225,11 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                             if (NavigationBarController.sCurrentOrientation
                                     == NavigationBarController.NavBarOrientation.LANDSCAPE) {
                                 String cleaned = removeImeSwitchers(layoutStr);
+                                // [2A 探测] 记录横屏 BEFORE / BEFORE_CLEAN / 结构分析
+                                try {
+                                    LandscapeProbe.logInflateBefore(layoutStr, cleaned);
+                                    LandscapeProbe.analyzeLayoutString(cleaned);
+                                } catch (Throwable ignored) { }
                                 if (!cleaned.equals(layoutStr)) {
                                     param.args[0] = cleaned;
                                 }
@@ -237,6 +248,23 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + ": inflateLayout after mark err: " + t);
                     }
+                    // [2A 探测] 横屏 inflate 完成后：dump View 树 / dispatcher / inflater 字段
+                    try {
+                        if (NavigationBarController.sCurrentOrientation
+                                == NavigationBarController.NavBarOrientation.LANDSCAPE) {
+                            if (param.thisObject instanceof View) {
+                                View inflaterView = (View) param.thisObject;
+                                LandscapeProbe.logInflateAfter(inflaterView);
+                                LandscapeProbe.dumpInflaterFields(inflaterView);
+                                // NavigationBarInflaterView 的父链上找 NavigationBarView 再 dump
+                                View navBarView = findNavBarView(inflaterView);
+                                if (navBarView != null) {
+                                    LandscapeProbe.dumpLandscapeTree(navBarView);
+                                    LandscapeProbe.dumpDispatchers(navBarView);
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) { }
                 }
             });
             XposedBridge.log(TAG + ": hooked getDefaultLayout + inflateLayout");
@@ -263,6 +291,20 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
             parts[i] = sb.toString();
         }
         return String.join(";", parts);
+    }
+
+    /** [2A 探测] 从 inflaterView 向上找 NavigationBarView（按类名匹配）。 */
+    private static View findNavBarView(View v) {
+        try {
+            android.view.ViewParent p = v.getParent();
+            while (p instanceof View) {
+                View pv = (View) p;
+                String cn = pv.getClass().getName();
+                if (cn.endsWith("NavigationBarView")) return pv;
+                p = pv.getParent();
+            }
+        } catch (Throwable ignored) { }
+        return null;
     }
 
     // =====================================================================
