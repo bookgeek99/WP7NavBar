@@ -210,13 +210,30 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                             String layoutStr = (String) param.args[0];
                             // [2C-8] 横屏不再移除 ime_switcher —— 现在横屏也要显示输入法切换键。
-                            //   仅保留探测日志（不再改写布局串）。
                             if (NavigationBarController.sCurrentOrientation
                                     == NavigationBarController.NavBarOrientation.LANDSCAPE) {
                                 try {
                                     LandscapeProbe.logInflateBefore(layoutStr, layoutStr);
                                 } catch (Throwable ignored) { }
                             }
+                            // [2C-9] 按开关状态纠正缓存的布局串。
+                            //   HyperOS 会把 getDefaultLayout 的结果缓存进 mCurrentLayout，
+                            //   之后 inflateLayout 直接使用缓存串（不再调 getDefaultLayout），
+                            //   故「开启→关闭」开关后缓存里仍残留 wp7search / recent[.5W]，
+                            //   必须在每次 inflate 前按当前开关状态纠正。
+                            try {
+                                boolean imeOn = SearchButtonController.isImeSwitcherEnabled(param.thisObject);
+                                boolean searchOn = SearchButtonController.isSearchButtonEnabled(param.thisObject);
+                                boolean landscape = NavigationBarController.sCurrentOrientation
+                                        == NavigationBarController.NavBarOrientation.LANDSCAPE;
+                                String fixed = SearchButtonController.fixCachedLayout(
+                                        layoutStr, imeOn, searchOn, landscape);
+                                if (!fixed.equals(layoutStr)) {
+                                    param.args[0] = fixed;
+                                    XposedBridge.log(TAG + ": [2C-9] fixCachedLayout\n  before="
+                                            + layoutStr + "\n  after =" + fixed);
+                                }
+                            } catch (Throwable ignored) { }
                         }
                     } catch (Throwable ignored) { }
                 }

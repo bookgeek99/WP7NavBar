@@ -104,11 +104,13 @@ public final class SearchButtonController {
                 injectedLeft = "ime_switcher[.5W]," + left;
             }
             parts[0] = injectedLeft;
-        }
-        // ---- 右段：[2C-退役] 不再注入 ime_switcher；仅注入独立 wp7search token ----
-        if (searchBtnEnabled && !parts[2].contains("wp7search")) {
-            // [2C-修复] 移除 right token：系统会把 right 重映射为 menu_ime，
-            // 导致右段多出一个 menu 键、Recent 错位。
+// ---- 右段 ----
+        // [2C-9] right token 的处置：
+        //   - 搜索键「开启」时：移除 right（避免系统把 right 重映射为 menu_ime 多出按键），
+        //     并注入 wp7search；recent 缩为 .5W 与左侧 ime_switcher 对称。
+        //   - 搜索键「关闭」时：完全还原系统原生串（保留 right[.5W]），
+        //     否则 right 的 weight 缺失会使 recent 占比由 1/4 变 1/3 → 变宽右移。
+        if (searchBtnEnabled) {
             String right = parts[2];
             right = right.replaceAll("(^|,)\\s*right(\\[[^\\]]*])?(?=,|$)", "");
             right = right.replaceAll(",,", ",").replaceAll("^,", "").replaceAll(",$", "");
@@ -119,6 +121,7 @@ public final class SearchButtonController {
             //   右半 = search(1) + recent(.5) = 1.5   ← 对称
             right = right.replaceAll("recent\\[\\s*1\\s*W", "recent[.5W");
             parts[2] = "wp7search[1W]," + right;
+        }
         }
         return String.join(";", parts);
     }
@@ -326,6 +329,74 @@ public final class SearchButtonController {
     // =====================================================================
     // 模块设置读取（跨进程 ContentProvider）
     // =====================================================================
+
+    // =====================================================================
+    // [2C-9] inflateLayout before：按开关状态纠正缓存的布局串
+    // =====================================================================
+
+    /**
+     * 修正 inflateLayout 收到的布局串，使其与当前开关状态一致。
+     *
+     * 背景：HyperOS 会把 getDefaultLayout 的返回串缓存进 mCurrentLayout，
+     * 后续 inflateLayout 直接使用缓存串、不再调用 getDefaultLayout。
+     * 因此在「开启 → 关闭」开关后，缓存串里仍残留 wp7search / recent[.5W]。
+     * 本方法在每次 inflate 前依据开关状态纠正缓存串：
+     *   - 搜索键关闭：移除 wp7search token，并把 recent 恢复为系统原生宽度（1W）
+     *   - 输入法键关闭：移除 ime_switcher token
+     *
+     * @return 修正后的布局串；无需修正时原样返回。
+     */
+    static String fixCachedLayout(String layout, boolean imeEnabled, boolean searchBtnEnabled,
+                                  boolean landscape) {
+        if (layout == null || layout.isEmpty()) return layout;
+        String[] parts = layout.split(";", -1);
+        if (parts.length < 3) return layout;
+        boolean changed = false;
+
+        // ---- 左段：ime_switcher ----
+        if (!imeEnabled && parts[0].contains("ime_switcher")) {
+            parts[0] = removeToken(parts[0], "ime_switcher");
+            changed = true;
+        }
+
+        // ---- 右段：wp7search + recent ----
+        if (!searchBtnEnabled) {
+            // 关闭搜索键：还原为系统原生右段。
+            // 注意：这里【不】删 right token —— right[.5W] 参与 ends_group 的 weight 分配，
+            //   删掉会使 recent 占比由 1/4 变 1/3（变宽且右移）。
+            //   系统原生串即：recent[1WC], right[.5W]
+            if (parts[2].contains("wp7search")) {
+                parts[2] = removeToken(parts[2], "wp7search");
+                changed = true;
+            }
+            // recent 恢复系统原生宽度（.5W → 1W）
+            if (parts[2].matches(".*recent\\[\\s*\\.?5\\s*W.*")) {
+                String restored = parts[2].replaceAll("recent\\[\\s*\\.?5\\s*W(C?)", "recent[1W$1");
+                // 若 right token 已被移除（历史版本残留），补回以还原原生权重
+                if (!restored.contains("right")) {
+                    restored = restored.replaceAll("(recent\\[1W[C]?)", "$1,right[.5W]");
+                }
+                parts[2] = restored;
+                changed = true;
+            }
+        }
+        return changed ? String.join(";", parts) : layout;
+    }
+
+    /** 从某一段（形如 "a[x],b,c[y]"）中移除指定 token（连同其修饰符）。 */
+    private static String removeToken(String segment, String tokenName) {
+        String[] items = segment.split(",", -1);
+        StringBuilder sb = new StringBuilder();
+        for (String it : items) {
+            String name = it.trim();
+            int br = name.indexOf('[');
+            if (br >= 0) name = name.substring(0, br).trim();
+            if (name.equals(tokenName)) continue;
+            if (sb.length() > 0) sb.append(",");
+            sb.append(it);
+        }
+        return sb.toString();
+    }
 
     /** 读取"左侧切换输入法"开关；失败默认开启。 */
     static boolean isImeSwitcherEnabled(Object obj) {

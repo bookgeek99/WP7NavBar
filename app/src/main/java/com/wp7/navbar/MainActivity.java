@@ -63,12 +63,12 @@ public class MainActivity extends Activity {
         root.addView(cardIme);
         root.addView(sectionSpacer(10));
 
-            // 任务键左侧搜索键
+        // 搜索键（替换任务键）
         LinearLayout cardSearch = Ui.card(this);
         cardSearch.setLayoutParams(cardLp());
         cardSearch.addView(settingRow(
-                this, "任务键搜索键",
-                "任务键左侧显示放大镜搜索键，单击唤起超级小爱、长按识屏",
+                this, "搜索键",
+                "将任务键替换为搜索键，任务键移到底部角落。单击搜索键唤起超级小爱，长按识屏",
                 SettingsStore.getSearchButton(this), "search_button"));
         root.addView(cardSearch);
 
