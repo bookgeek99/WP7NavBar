@@ -94,15 +94,8 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     try {
-                        // 若 500ms 内有搜索键被触摸（ACTION_DOWN 记录），说明本次点击来自搜索键，
-                        // 不弹输入法菜单，交给搜索键的 OnClick（呼小爱）。旋转后 OnClick 丢失时，
-                        // 这里阻断系统循环切换，搜索键的 OnTouchListener 仍记录了触摸。
-                        long elapsed = android.os.SystemClock.uptimeMillis()
-                                - SearchButtonController.lastSearchTouchTime;
-                        if (elapsed >= 0 && elapsed < 500) {
-                            param.setResult(null);
-                            return;
-                        }
+                        // [2C-退役] 右段搜索键已不再复用 ime_switcher，
+                        // onImeSwitcherClick 只会来自左段输入法键 → 直接弹输入法选择菜单。
                         Object imm = SystemUiReflection.getFieldQuiet(param.thisObject, "mInputMethodManager");
                         Object displayIdObj = SystemUiReflection.getFieldQuiet(param.thisObject, "mDisplayId");
                         if (imm != null && displayIdObj instanceof Integer) {
@@ -137,8 +130,7 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
 
     private void updateLeftImeSwitcherRecursive(View v, boolean imeVisible) {
         try {
-            if (v instanceof ImageView && v.getId() == SystemUiIds.ID_IME_SWITCHER
-                    && !SearchButtonController.markedViews.contains(v)) {
+            if (v instanceof ImageView && v.getId() == SystemUiIds.ID_IME_SWITCHER) {
                 int want = imeVisible ? View.VISIBLE : View.GONE;
                 if (v.getVisibility() != want) {
                     v.setVisibility(want);
@@ -167,8 +159,8 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
             XposedBridge.hookAllMethods(keyBtnCls, "setImageDrawable", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
-                    // 竖屏 Search：仅右段搜索键在竖屏时替换图标，避免首帧闪现错误图标
-                    SearchButtonController.onSetImageDrawableBefore(param);
+                    // [2C-退役] 旧 masquerade Search 图标替换已删除。
+                    // 新 Search 图标由 SearchContextualButtonFactory 在 setButtonDispatchers after 设置。
                 }
 
                 @Override
@@ -325,12 +317,25 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     try {
+                        // 无条件入口日志：确认 inflateButtons 是否被调用 + 参数类型
+                        if (param.args != null) {
+                            StringBuilder sb = new StringBuilder();
+                            for (Object a : param.args) {
+                                sb.append(a == null ? "null" : a.getClass().getSimpleName()).append("|");
+                            }
+                            XposedBridge.log(TAG + ": [2C-inflateButtons-CALL] args=" + sb);
+                        } else {
+                            XposedBridge.log(TAG + ": [2C-inflateButtons-CALL] args=null");
+                        }
                         if (param.args == null || param.args.length < 3) return;
                         if (!(param.args[0] instanceof String[])) return;
                         if (!(param.args[1] instanceof android.view.ViewGroup)) return;
                         String[] tokens = (String[]) param.args[0];
                         android.view.ViewGroup parent = (android.view.ViewGroup) param.args[1];
                         boolean landscape = (param.args[2] instanceof Boolean) && (Boolean) param.args[2];
+                        // token 列表
+                        XposedBridge.log(TAG + ": [2C-inflateButtons] tokens="
+                                + java.util.Arrays.toString(tokens) + " landscape=" + landscape);
 
                         boolean hasSearch = false;
                         for (String tk : tokens) {
