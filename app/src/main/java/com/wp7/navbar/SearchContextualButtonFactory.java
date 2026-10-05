@@ -211,10 +211,7 @@ public final class SearchContextualButtonFactory {
             //   wrapper.setDefaultGravity(g); wrapper.setGravity(g)
             //   wrapper.addView(btn, FrameLayout.LayoutParams(btn原LP))
             //   parent.addView(wrapper, LinearLayout.LayoutParams(keyWidth×weight, MATCH))
-            android.view.ViewGroup.LayoutParams neighborLp = null;
-            View neighbor = findNeighborKey(parent);
-            if (neighbor != null) neighborLp = neighbor.getLayoutParams();
-            View wrapper = wrapWithReverseRelative(parent, btn, token, neighborLp);
+            View wrapper = wrapWithReverseRelative(parent, btn, token, landscape);
             if (wrapper != null) {
                 btn = wrapper; // 绑定/日志用 wrapper
             } else {
@@ -273,7 +270,7 @@ public final class SearchContextualButtonFactory {
      *   parent.addView(wrapper, LinearLayout.LayoutParams(keyWidth, MATCH))
      */
     private static View wrapWithReverseRelative(ViewGroup parent, View btn, String token,
-                                                android.view.ViewGroup.LayoutParams neighborLp) {
+                                                boolean landscape) {
         try {
             if (!(parent instanceof android.widget.LinearLayout)) return null;
             android.content.Context ctx = btn.getContext();
@@ -284,12 +281,18 @@ public final class SearchContextualButtonFactory {
             java.lang.reflect.Constructor<?> ctor = rrlCls.getDeclaredConstructor(android.content.Context.class);
             ctor.setAccessible(true);
             android.view.ViewGroup wrapper = (android.view.ViewGroup) ctor.newInstance(ctx);
-
-            // 内层 FrameLayout.LayoutParams（来自 btn 原 LP）
-            android.view.ViewGroup.LayoutParams btnLp = btn.getLayoutParams();
+            // [2C-4] 内层 KeyButtonView：与 Back/Recent 一致，主轴尺寸 = navigation_key_width。
+            //   custom_key.xml 声明为 navigation_side_padding(130) —— 必须覆盖为 navigation_key_width(195)。
+            // [2C-4] 内外层统一使用「竖屏语义」的 LayoutParams：
+            //   外层 = LinearLayout.LayoutParams(0, MATCH_PARENT, weight)
+            //   内层 = FrameLayout.LayoutParams(navigation_key_width, MATCH_PARENT)
+            // 横屏容器是 ReverseLinearLayout/ReverseRelativeLayout，它会在 addView 时
+            // 自动调用 reverseParams() 交换 width/height（已验证 smali）。
+            // 因此这里【不要】自己写横屏分支，否则会被二次交换成错误的 w=0/h=MATCH。
+            int innerMain = resolveKeyWidth(btn);
             android.widget.FrameLayout.LayoutParams flp =
-                    (btnLp != null) ? new android.widget.FrameLayout.LayoutParams(btnLp)
-                                    : new android.widget.FrameLayout.LayoutParams(-2, -1);
+                    new android.widget.FrameLayout.LayoutParams(
+                            innerMain, android.view.ViewGroup.LayoutParams.MATCH_PARENT);
 
             // gravity：token 以 "WC" 结尾 → 0x11(CENTER_HORIZONTAL|CENTER_VERTICAL)
             int gravity = 0x11;
@@ -302,19 +305,19 @@ public final class SearchContextualButtonFactory {
 
             wrapper.addView(btn, flp);
 
-            // 外层：宽度对齐邻居键；邻居还没 inflate 时读 navigation_key_width
-            int w;
-            if (neighborLp != null && neighborLp.width > 0) {
-                w = neighborLp.width;
-            } else {
-                w = resolveKeyWidth(btn);
-            }
+            // [2C-4] 外层 wrapper：与系统 [xW] token 完全一致 ——
+            //   主轴方向尺寸 = 0，交叉轴 = MATCH_PARENT，weight = token 解析值。
+            //   让父 LinearLayout 按 weight 分配宽度（不写死像素、不手动算）。
             float weight = parseWeight(token);
-            if (weight > 0f && w > 0) w = (int) (w * weight);
+            if (weight <= 0f) weight = 1.0f;   // 兜底：token 解析失败时按 1W
             android.widget.LinearLayout.LayoutParams outerLp =
-                    new android.widget.LinearLayout.LayoutParams(w, android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+                    new android.widget.LinearLayout.LayoutParams(
+                            0, android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+            outerLp.weight = weight;
             parent.addView(wrapper, outerLp);
-            log("wrap OK: keyWidth=" + w + " gravity=0x" + Integer.toHexString(gravity));
+            log("wrap OK: outerMain=0 weight=" + weight
+                    + " innerMain=" + innerMain + " landscape=" + landscape
+                    + " gravity=0x" + Integer.toHexString(gravity));
             return wrapper;
         } catch (Throwable t) {
             log("wrap err: " + t);
