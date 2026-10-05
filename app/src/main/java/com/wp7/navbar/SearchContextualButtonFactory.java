@@ -204,7 +204,6 @@ public final class SearchContextualButtonFactory {
                 return;
             }
             btn.setId(SystemUiIds.WP7_SEARCH_ID);
-            // 与系统 generic key 一致：设置可点击等（先最小化，仅 setId）
             parent.addView(btn);
             // 调用原系统 addToDispatchers(view) —— 让 SystemUI 自己完成绑定
             boolean bound = callAddToDispatchers(inflaterView, btn);
@@ -249,6 +248,76 @@ public final class SearchContextualButtonFactory {
         }
     }
 
+    // ==================================================================
+    // 2C-2：给 Search dispatcher 设置 WP7 放大镜图标
+    // ==================================================================
+
+    /**
+     * 给 mButtonDispatchers[WP7_SEARCH_ID] 设置 WP7 放大镜图标（mImageDrawable）。
+     *
+     * 必须在系统 addAll 绑定完成之后调用（setButtonDispatchers after），
+     * 此时 dispatcher.mViews 已有 horizontal + vertical 两个 View。
+     *
+     * 完全走系统路径：dispatcher.setImageDrawable(KeyButtonDrawable)
+     * 不依赖 View 顺序/resource name/mCode；通过 dispatcher identity 定位。
+     */
+    public static void applyWp7IconAfterBind(Object inflaterView) {
+        try {
+            Object dispatchersObj = SystemUiReflection.getFieldQuiet(inflaterView, "mButtonDispatchers");
+            if (!(dispatchersObj instanceof SparseArray)) {
+                log("applyWp7Icon: mButtonDispatchers not SparseArray");
+                return;
+            }
+            SparseArray<?> dispatchers = (SparseArray<?>) dispatchersObj;
+            Object dispatcher = dispatchers.get(SystemUiIds.WP7_SEARCH_ID);
+            if (dispatcher == null) {
+                log("applyWp7Icon: dispatcher null");
+                return;
+            }
+            Object mViews = SystemUiReflection.getFieldQuiet(dispatcher, "mViews");
+            android.widget.ImageView template = null;
+            if (mViews instanceof java.util.List) {
+                for (Object o : (java.util.List<?>) mViews) {
+                    if (o instanceof android.widget.ImageView) { template = (android.widget.ImageView) o; break; }
+                }
+            }
+            if (template == null) {
+                log("applyWp7Icon: no ImageView in mViews");
+                return;
+            }
+            android.graphics.drawable.Drawable kbd = SearchButtonController.createSearchKeyButtonDrawable(template, template.getClass().getClassLoader());
+            if (kbd == null) {
+                log("applyWp7Icon: createSearchKeyButtonDrawable null");
+                return;
+            }
+            Class<?> kbdCls = SystemUiReflection.findClass("com.android.systemui.navigationbar.views.buttons.KeyButtonDrawable", template.getClass().getClassLoader());
+            if (kbdCls == null) {
+                log("applyWp7Icon: KeyButtonDrawable class not found");
+                return;
+            }
+            // ButtonDispatcher.setImageDrawable 是 public final，且在父类（ContextualButton 未重写），
+            // 故用 getMethod（含继承）；找不到时逐级向父类 getDeclaredMethod。
+            java.lang.reflect.Method m = null;
+            try {
+                m = dispatcher.getClass().getMethod("setImageDrawable", kbdCls);
+            } catch (NoSuchMethodException nsme) {
+                Class<?> cc = dispatcher.getClass();
+                while (cc != null && m == null) {
+                    try { m = cc.getDeclaredMethod("setImageDrawable", kbdCls); }
+                    catch (NoSuchMethodException e2) { cc = cc.getSuperclass(); }
+                }
+            }
+            if (m == null) {
+                log("applyWp7Icon: setImageDrawable method not found");
+                return;
+            }
+            m.setAccessible(true);
+            m.invoke(dispatcher, kbd);
+            log("applyWp7Icon OK: dispatcher=" + dispatcher.getClass().getSimpleName() + " kbd=" + kbd.getClass().getSimpleName());
+        } catch (Throwable t) {
+            log("applyWp7Icon err: " + t);
+        }
+    }
     /** putInto 完成后（setButtonDispatchers after）dump Search dispatcher 状态。 */
     public static void dumpAfterBind(Object inflaterView) {
         dumpSearchDispatcher(inflaterView);

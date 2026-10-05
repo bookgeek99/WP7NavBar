@@ -313,6 +313,8 @@ public class Wp7NavbarHook implements IXposedHookLoadPackage {
                     // 此时我们的 Search dispatcher 应已收到 horizontal + vertical 两个 View。
                     try {
                         SearchContextualButtonFactory.dumpAfterBind(param.thisObject);
+                        // [2C-2] 此时 mViews 已绑定两个 View，设置 WP7 放大镜图标
+                        SearchContextualButtonFactory.applyWp7IconAfterBind(param.thisObject);
                     } catch (Throwable ignored) { }
                 }
             });
