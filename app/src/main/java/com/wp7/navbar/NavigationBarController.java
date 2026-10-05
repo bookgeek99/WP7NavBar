@@ -86,7 +86,11 @@ public final class NavigationBarController {
                                     "com.android.systemui.navigationbar.views.NavigationBarInflaterView");
                             if (inflater != null) {
                                 LandscapeProbe.dumpInflaterFields(inflater);
+                                // [2B 探测] ContextualButton / ContextualButtonGroup 深度分析
+                                Object dispatchers = SystemUiReflection.getFieldQuiet(inflater, "mButtonDispatchers");
+                                ContextualProbe.probeDispatchers(inflater, dispatchers);
                             }
+                            ContextualProbe.probeContextualButtonGroup(navBarView);
                         } catch (Throwable ignored) { }
                     }
                 }, 300);
