@@ -60,13 +60,16 @@ public final class PortraitNavigationController {
 
     /** 注册 OnPreDrawListener 持续监听：每次绘制前检查，竖屏且未正确标记时标记右段搜索键。 */
     private void markAndSetupSearchButtons(final View root) {
-        root.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
-            @Override
-            public boolean onPreDraw() {
-                markNowTry(root);
-                return true;
-            }
-        });
+        try {
+            if (root.getViewTreeObserver() == null || !root.getViewTreeObserver().isAlive()) return;
+            root.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    markNowTry(root);
+                    return true;
+                }
+            });
+        } catch (Throwable ignored) { }
     }
 
     /** 尝试标记右段搜索键；返回 true 表示本次状态稳定（横屏或已正确标记）。 */
@@ -75,6 +78,8 @@ public final class PortraitNavigationController {
         if (root.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
             return true;
         }
+        // Search 开关关闭时不标记（避免残留标记污染后续 setImageDrawable）
+        if (!SearchButtonController.isSearchButtonEnabled(root)) return true;
         List<ImageView> candidates = new ArrayList<>();
         collectImeSwitchers(root, candidates);
         if (candidates.isEmpty()) return false;

@@ -1,36 +1,31 @@
 package com.wp7.navbar;
 
 import android.view.View;
+import android.widget.ImageView;
 
 import de.robv.android.xposed.XposedBridge;
 
 /**
- * 横屏导航控制器（方案第八节）。
+ * 横屏导航控制器（第一阶段基线）。
  *
- * 横屏最终目标（第一阶段）：Back + Home + Recent，其中 Recent 完全由 SystemUI 原生管理。
+ * 横屏目标：Back + Home + Recent，全部由 SystemUI 原生管理。
  *
- * 本 controller 只允许：
- *  - Back / Home 图标替换（由 Wp7IconController 在 setImageDrawable hook 统一处理）
- *  - 清理任何残留的 ime_switcher（横屏布局不应出现输入法键）
- *
- * 明确不做（方案第八/十一/十八节）：
- *  - 不创建 Search
- *  - 不修改 Recent（drawable / visibility / click / dispatcher / layout / margin 全部不动）
- *  - 不注入、不改变横屏 layout XML
+ * 本 controller 只做一件事：隐藏横屏所有 ime_switcher（防御层）。
+ *  - Back / Home 图标替换由 Wp7IconController 在 setImageDrawable hook 统一处理（横竖屏共用）
+ *  - 布局串里的 ime_switcher 已在 inflateLayout before 阶段剥离（Wp7NavbarHook.removeImeSwitchers）
+ *  - 此处 hideAllImeSwitchers 是防御层：确保即使布局串清理有遗漏，横屏也不出现输入法键
+ *  - 不创建 Search、不修改 Recent、不碰 Recent 的 click/dispatcher/layout/margin
  */
 public final class LandscapeNavigationController {
-
     private static final String TAG = "WP7NavBar";
-
     private final View navBarView;
 
     LandscapeNavigationController(View navBarView) {
         this.navBarView = navBarView;
     }
 
-    /** 横屏应用：Back/Home 图标由统一 hook 处理；清理残留 ime_switcher。 */
+    /** 横屏应用：隐藏所有 ime_switcher（防御层），其余不动。 */
     void apply() {
-        // 横屏布局可能复用了竖屏注入的串（含 ime_switcher），强制把横屏所有 ime_switcher 设 GONE。
         try {
             hideAllImeSwitchers(navBarView);
         } catch (Throwable t) {
@@ -40,7 +35,7 @@ public final class LandscapeNavigationController {
 
     private void hideAllImeSwitchers(View v) {
         try {
-            if (v instanceof android.widget.ImageView && v.getId() == SystemUiIds.ID_IME_SWITCHER) {
+            if (v instanceof ImageView && v.getId() == SystemUiIds.ID_IME_SWITCHER) {
                 if (v.getVisibility() != View.GONE) {
                     v.setVisibility(View.GONE);
                 }
@@ -53,7 +48,4 @@ public final class LandscapeNavigationController {
             }
         } catch (Throwable ignored) { }
     }
-
-    @SuppressWarnings("unused")
-    View getNavBarView() { return navBarView; }
 }

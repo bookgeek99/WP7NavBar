@@ -183,7 +183,8 @@ public final class SearchButtonController {
             if (iv.getId() != SystemUiIds.ID_IME_SWITCHER) return;
             // 横屏：不做任何 Search 替换，保持系统原生
             if (isLandscape(iv)) return;
-
+            // 硬保护：Search 开关关闭时绝不替换图标（即使被误标记）
+            if (!isSearchButtonEnabled(iv)) return;
             // 只替换"已被标记为右段搜索键"的 View。标记统一由 PortraitNavigationController
             // 的 OnPreDrawListener（layout 后 X 坐标有效）完成，不在此做即时标记。
             if (!markedViews.contains(iv)) return;
