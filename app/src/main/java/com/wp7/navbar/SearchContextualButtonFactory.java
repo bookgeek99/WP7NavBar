@@ -31,6 +31,8 @@ import de.robv.android.xposed.XposedBridge;
 public final class SearchContextualButtonFactory {
 
     private static final String TAG = "WP7NavBar";
+    // [2C-7 修复] applyWp7IconAfterBind 在 mViews 尚无 ImageView 时的重试计数（上限 3）
+    private static int retryNoViewCount = 0;
     private static final String P = "[WP7Search2C1] ";
     private static final String TOKEN = "wp7search";
 
@@ -443,9 +445,23 @@ public final class SearchContextualButtonFactory {
                 }
             }
             if (template == null) {
-                log("applyWp7Icon: no ImageView in mViews");
+                // [2C-7 修复] 刷新时机可能早于 mViews 绑定（collectRefColor 的 post 与
+                //   setButtonDispatchers 的时序不保证）→ 此时无 ImageView。延迟到后续帧重试，
+                //   避免刷新被静默丢弃而图标停留在首次的默认兜底色（纯白，视觉"变浅"）。
+                if (retryNoViewCount < 3 && inflaterView instanceof View) {
+                    retryNoViewCount++;
+                    log("applyWp7Icon: no ImageView in mViews, retry#" + retryNoViewCount);
+                    ((View) inflaterView).post(new Runnable() {
+                        @Override public void run() {
+                            applyWp7IconAfterBind(inflaterView);
+                        }
+                    });
+                } else {
+                    log("applyWp7Icon: no ImageView in mViews");
+                }
                 return;
             }
+            retryNoViewCount = 0;
             // [颜色对齐] 设图标前先确保已从业 Home/Back 读取参照色。
             // template 是新 Search View，其 drawable 无有效 mState，无法作参照。
             // 由 inflaterView 向上找 NavigationBarView 后收集 refColor。
